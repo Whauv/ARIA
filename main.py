@@ -8,15 +8,15 @@ import mediapipe as mp
 from canvas import DrawingCanvas, smooth_point
 from config import (
     ALPHA,
-    CLEAR_HOLD_SECONDS,
+    FINISH_HOLD_SECONDS,
     SMOOTHING_NEW_WEIGHT,
     SMOOTHING_PREV_WEIGHT,
     STATUS_BG_COLOR,
-    STATUS_CLEARED,
     STATUS_COLOR,
     STATUS_DRAWING,
     STATUS_IDLE,
     STATUS_PAUSED,
+    STATUS_SPRITE_CREATED,
     TARGET_FPS,
 )
 from gestures import (
@@ -25,6 +25,7 @@ from gestures import (
     is_index_and_middle_up,
     is_index_only_up,
 )
+from sprite import create_sprite_from_canvas, overlay_sprite
 
 
 def draw_status(frame, status: str) -> None:
@@ -54,11 +55,12 @@ def main() -> None:
     )
 
     drawing_canvas = None
+    sprites = []
     prev_smoothed_point = None
     prev_draw_point = None
     fist_start_time = None
     status_text = STATUS_IDLE
-    cleared_at = None
+    status_expires_at = None
     frame_interval = 1.0 / TARGET_FPS
 
     try:
@@ -93,12 +95,16 @@ def main() -> None:
                 if is_closed_fist(hand_landmarks):
                     if fist_start_time is None:
                         fist_start_time = time.time()
-                    elif time.time() - fist_start_time >= CLEAR_HOLD_SECONDS:
-                        drawing_canvas.clear()
-                        prev_smoothed_point = None
-                        prev_draw_point = None
-                        status_text = STATUS_CLEARED
-                        cleared_at = time.time()
+                    elif time.time() - fist_start_time >= FINISH_HOLD_SECONDS:
+                        drawing_canvas.reset_stroke()
+                        sprite = create_sprite_from_canvas(drawing_canvas.canvas, len(sprites))
+                        if sprite is not None:
+                            sprites.append(sprite)
+                            drawing_canvas.clear()
+                            prev_smoothed_point = None
+                            prev_draw_point = None
+                            status_text = STATUS_SPRITE_CREATED
+                            status_expires_at = time.time() + 0.6
                         fist_start_time = None
                 else:
                     fist_start_time = None
@@ -113,7 +119,7 @@ def main() -> None:
                     drawing_canvas.reset_stroke()
                     prev_draw_point = None
                     status_text = STATUS_PAUSED
-                elif status_text != STATUS_CLEARED:
+                elif status_text != STATUS_SPRITE_CREATED:
                     drawing_canvas.reset_stroke()
                     prev_draw_point = None
                     status_text = STATUS_IDLE
@@ -122,12 +128,15 @@ def main() -> None:
                 prev_smoothed_point = None
                 prev_draw_point = None
                 fist_start_time = None
-                if status_text != STATUS_CLEARED:
+                if status_text != STATUS_SPRITE_CREATED:
                     status_text = STATUS_IDLE
+
+            for sprite in sorted(sprites, key=lambda item: item.z_index):
+                overlay_sprite(frame, sprite)
 
             output_frame = drawing_canvas.overlay_on(frame, ALPHA)
             draw_status(output_frame, status_text)
-            cv2.imshow("ARIA Phase 1", output_frame)
+            cv2.imshow("ARIA Phase 2", output_frame)
 
             elapsed = time.time() - loop_start
             remaining = max(0.0, frame_interval - elapsed)
@@ -135,7 +144,7 @@ def main() -> None:
             if cv2.waitKey(wait_ms) & 0xFF == ord("q"):
                 break
 
-            if status_text == STATUS_CLEARED and cleared_at and time.time() - cleared_at >= 0.5:
+            if status_text == STATUS_SPRITE_CREATED and status_expires_at and time.time() >= status_expires_at:
                 status_text = STATUS_IDLE
     finally:
         hands.close()
