@@ -42,6 +42,9 @@ class Sprite:
         self.w = new_w
         self.h = new_h
 
+    def scale_by_factor(self, factor: float) -> None:
+        self.resize_from_original(factor)
+
 
 def create_sprite_from_canvas(canvas: np.ndarray, z_index: int) -> Optional[Sprite]:
     canvas_gray = cv2.cvtColor(canvas, cv2.COLOR_BGR2GRAY)
