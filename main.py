@@ -155,6 +155,20 @@ def get_topmost_sprite_at_point(sprites, point):
     return None
 
 
+def get_topmost_sprite_near_point(sprites, point, padding: int = 18):
+    if point is None:
+        return None
+
+    px, py = point
+    for sprite in sorted(sprites, key=lambda item: item.z_index, reverse=True):
+        if (
+            sprite.x - padding <= px <= sprite.x + sprite.w + padding
+            and sprite.y - padding <= py <= sprite.y + sprite.h + padding
+        ):
+            return sprite
+    return None
+
+
 def bring_sprite_to_front(sprites, sprite) -> None:
     if sprite is None:
         return
@@ -178,14 +192,45 @@ def resize_for_mediapipe(frame: np.ndarray) -> np.ndarray:
     return cv2.resize(frame, (resized_width, resized_height), interpolation=cv2.INTER_AREA)
 
 
+def enhance_low_light(frame: np.ndarray) -> np.ndarray:
+    lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
+    l_channel, a_channel, b_channel = cv2.split(lab)
+    mean_luma = float(np.mean(l_channel))
+    if mean_luma >= 115:
+        return frame
+
+    clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8))
+    l_channel = clahe.apply(l_channel)
+    enhanced = cv2.cvtColor(cv2.merge((l_channel, a_channel, b_channel)), cv2.COLOR_LAB2BGR)
+    gamma = 1.25 if mean_luma > 80 else 1.45
+    gamma_table = np.array([((index / 255.0) ** (1.0 / gamma)) * 255 for index in range(256)], dtype=np.uint8)
+    return cv2.LUT(enhanced, gamma_table)
+
+
+def expand_rect(rect: tuple[int, int, int, int], padding: int) -> tuple[int, int, int, int]:
+    left, top, right, bottom = rect
+    return left - padding, top - padding, right + padding, bottom + padding
+
+
+def point_in_any_rect(point: tuple[int, int] | None, rects: list[tuple[int, int, int, int]]) -> bool:
+    if point is None:
+        return False
+    return any(point_in_rect(point, rect) for rect in rects)
+
+
 def main() -> None:
+    window_name = "ARIA Phase 5"
+    cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+    cv2.resizeWindow(window_name, 1400, 900)
+    cv2.setWindowProperty(window_name, cv2.WND_PROP_AUTOSIZE, cv2.WINDOW_NORMAL)
+
     cap = cv2.VideoCapture(0)
     cap.set(cv2.CAP_PROP_FPS, TARGET_FPS)
     if not cap.isOpened():
         error_frame = np.zeros((220, 720, 3), dtype=np.uint8)
         cv2.putText(error_frame, "ARIA could not find a webcam.", (55, 95), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 255), 2)
         cv2.putText(error_frame, "Check your camera connection and try again.", (35, 140), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-        cv2.imshow("ARIA Error", error_frame)
+        cv2.imshow(window_name, error_frame)
         cv2.waitKey(2500)
         cv2.destroyAllWindows()
         return
@@ -297,6 +342,7 @@ def main() -> None:
                 break
 
             frame = cv2.flip(frame, 1)
+            frame = enhance_low_light(frame)
             if drawing_canvas is None:
                 drawing_canvas = DrawingCanvas(frame.shape)
 
@@ -316,9 +362,16 @@ def main() -> None:
                 status_expires_at = time.time() + 1.0
 
             hand_landmarks = all_hands[0] if all_hands else None
+            palette_items = get_palette_items(frame_width)
+            toolbar_items = get_toolbar_items(frame_width, frame_height)
 
             with sprites_lock:
                 selected_sprite = get_selected_sprite(sprites)
+                sprite_snapshot = list(sorted(sprites, key=lambda item: item.z_index))
+            thumbnail_items = get_thumbnail_items(frame, sprite_snapshot)
+            palette_rects = [item["rect"] for item in palette_items]
+            toolbar_rects = [item["rect"] for item in toolbar_items]
+            thumbnail_rects = [item["rect"] for item in thumbnail_items]
 
             is_resize_mode = interaction_mode == "select_mode" and is_two_hand_resize(all_hands)
             if is_resize_mode:
@@ -379,18 +432,19 @@ def main() -> None:
                 )
                 pinch_started = pinch_active and not previous_pinch_active
 
-                palette_items = get_palette_items(frame_width)
-                toolbar_items = get_toolbar_items(frame_width, frame_height)
-                with sprites_lock:
-                    sprite_snapshot = list(sorted(sprites, key=lambda item: item.z_index))
-                thumbnail_items = get_thumbnail_items(frame, sprite_snapshot)
-
                 hover_candidate = None
-                if current_point is not None and not pinch_active:
-                    for item in palette_items + toolbar_items:
-                        if point_in_rect(current_point, item["rect"]):
+                hover_point = raw_fingertip or current_point
+                if hover_point is not None and not pinch_active:
+                    for item in toolbar_items:
+                        if point_in_rect(hover_point, expand_rect(item["rect"], 34)):
                             hover_candidate = item["id"]
                             break
+                    if hover_candidate is None:
+                        for item in palette_items:
+                            if point_in_rect(hover_point, expand_rect(item["rect"], 20)):
+                                hover_candidate = item["id"]
+                                break
+                pointer_over_controls = point_in_any_rect(hover_point, palette_rects + toolbar_rects)
 
                 now = time.time()
                 if hover_candidate != hover_target_id:
@@ -411,37 +465,55 @@ def main() -> None:
                         status_text = "Cleared"
                         status_expires_at = now + 0.8
                     elif hover_candidate == "toolbar:save":
-                        if save_snapshot("aria_snapshot.png"):
-                            status_text = "Saved"
-                            status_expires_at = now + 0.8
+                            if save_snapshot("aria_snapshot.png"):
+                                status_text = "Saved"
+                                status_expires_at = now + 0.8
                     elif hover_candidate == "toolbar:undo":
                         if undo_last_stroke():
                             status_text = "Undid"
                             status_expires_at = now + 0.8
                     hover_target_id = None
                     hover_start_time = None
+                    previous_pinch_active = False
+                    prev_draw_point = None
+                    fist_start_time = None
 
                 pinch_target_sprite = None
-                if interaction_mode == "select_mode" and current_point is not None:
+                if interaction_mode == "select_mode" and current_point is not None and not pointer_over_controls:
+                    hit_point = raw_fingertip or current_point
+
+                    with sprites_lock:
+                        hovered_sprite = get_topmost_sprite_near_point(sprites, hit_point, padding=22)
+                        if hovered_sprite is not None and not pinch_active:
+                            clear_sprite_selection(sprites)
+                            hovered_sprite.selected = True
+
+                    thumbnail_target_sprite = None
                     if pinch_started:
                         for item in thumbnail_items:
-                            if point_in_rect(current_point, item["rect"]):
-                                pinch_target_sprite = item["sprite"]
+                            if point_in_rect(hit_point, expand_rect(item["rect"], 10)):
+                                thumbnail_target_sprite = item["sprite"]
                                 with sprites_lock:
                                     clear_sprite_selection(sprites)
-                                    pinch_target_sprite.selected = True
-                                    bring_sprite_to_front(sprites, pinch_target_sprite)
+                                    thumbnail_target_sprite.selected = True
+                                    bring_sprite_to_front(sprites, thumbnail_target_sprite)
                                 break
 
                     with sprites_lock:
-                        scene_sprite = dragging_sprite or get_topmost_sprite_at_point(sprites, current_point)
+                        selected_sprite = get_selected_sprite(sprites)
+                        hover_sprite = get_topmost_sprite_near_point(sprites, hit_point, padding=22)
+                        scene_sprite = dragging_sprite or hover_sprite or selected_sprite
 
-                    pinch_target_sprite = pinch_target_sprite or scene_sprite
+                    pinch_target_sprite = thumbnail_target_sprite or scene_sprite
                     if pinch_started and pinch_target_sprite is not None:
                         if is_double_pinch(last_pinch_time, now, DOUBLE_PINCH_SECONDS) and last_pinched_sprite_ref == id(pinch_target_sprite):
                             with sprites_lock:
-                                if pinch_target_sprite in sprites:
-                                    sprites.remove(pinch_target_sprite)
+                                remove_index = next(
+                                    (index for index, sprite in enumerate(sprites) if sprite is pinch_target_sprite),
+                                    None,
+                                )
+                                if remove_index is not None:
+                                    sprites.pop(remove_index)
                                     clear_sprite_selection(sprites)
                             pinch_target_sprite = None
                             last_pinch_time = None
@@ -449,6 +521,10 @@ def main() -> None:
                             status_text = "Deleted sprite"
                             status_expires_at = now + 0.8
                         else:
+                            with sprites_lock:
+                                clear_sprite_selection(sprites)
+                                pinch_target_sprite.selected = True
+                                bring_sprite_to_front(sprites, pinch_target_sprite)
                             last_pinch_time = now
                             last_pinched_sprite_ref = id(pinch_target_sprite)
 
@@ -477,6 +553,7 @@ def main() -> None:
                                 sprite.dragging = False
 
                 if interaction_mode == "draw_mode":
+                    drawing_blocked_by_ui = hover_candidate is not None or point_in_any_rect(raw_fingertip or current_point, palette_rects + toolbar_rects + thumbnail_rects)
                     if is_closed_fist(hand_landmarks):
                         if fist_start_time is None:
                             fist_start_time = now
@@ -501,11 +578,15 @@ def main() -> None:
                     else:
                         fist_start_time = None
 
-                    if is_index_only_up(hand_landmarks) and current_point is not None and not pinch_active:
+                    if is_index_only_up(hand_landmarks) and current_point is not None and not pinch_active and not drawing_blocked_by_ui:
                         status_text = STATUS_DRAWING
                         if prev_draw_point is not None:
                             with canvas_lock:
                                 drawing_canvas.add_segment(prev_draw_point, current_point)
+                        else:
+                            prev_smoothed_point = (float(current_point[0]), float(current_point[1]))
+                            with canvas_lock:
+                                drawing_canvas.add_segment(current_point, current_point)
                         prev_draw_point = current_point
                     elif is_index_and_middle_up(hand_landmarks):
                         with canvas_lock:
@@ -540,12 +621,6 @@ def main() -> None:
                 if status_text != STATUS_SPRITE_CREATED:
                     status_text = STATUS_IDLE
 
-            with sprites_lock:
-                sprite_snapshot = list(sorted(sprites, key=lambda item: item.z_index))
-            palette_items = get_palette_items(frame_width)
-            toolbar_items = get_toolbar_items(frame_width, frame_height)
-            thumbnail_items = get_thumbnail_items(frame, sprite_snapshot)
-
             for sprite in sprite_snapshot:
                 overlay_sprite(frame, sprite)
             for sprite in sprite_snapshot:
@@ -561,7 +636,13 @@ def main() -> None:
             draw_status(output_frame, status_text)
             draw_mode_indicator(output_frame, "RESIZING" if is_resize_mode else ("DRAWING" if interaction_mode == "draw_mode" else "SELECTING"))
             draw_voice_indicator(output_frame, jarvis.listening_event.is_set(), jarvis.speaking_event.is_set())
-            draw_warning_overlay(output_frame, ai_warning_text)
+            warning_parts = []
+            if ai_warning_text:
+                warning_parts.append("AI off")
+            if not jarvis.voice_available and jarvis.last_error:
+                warning_parts.append("Voice off")
+            warning_text = " | ".join(warning_parts) if warning_parts else None
+            draw_warning_overlay(output_frame, warning_text)
             if interaction_mode == "draw_mode":
                 draw_brush_preview(output_frame, current_point, LINE_THICKNESS, config.get_active_brush_color())
 
@@ -571,7 +652,7 @@ def main() -> None:
             draw_fps(output_frame, fps)
             with frame_lock:
                 latest_frame = output_frame.copy()
-            cv2.imshow("ARIA Phase 5", output_frame)
+            cv2.imshow(window_name, output_frame)
 
             remaining = max(0.0, frame_interval - (time.time() - loop_start))
             wait_ms = max(1, int(remaining * 1000))

@@ -13,14 +13,11 @@ import config
 from ai_utils import describe_image_with_gemini
 
 try:
-    import pvporcupine
+    import openwakeword
+    from openwakeword.model import Model
 except ImportError:  # pragma: no cover - optional dependency
-    pvporcupine = None
-
-try:
-    from pvrecorder import PvRecorder
-except ImportError:  # pragma: no cover - optional dependency
-    PvRecorder = None
+    openwakeword = None
+    Model = None
 
 try:
     import speech_recognition as sr
@@ -104,6 +101,8 @@ class JarvisAssistant:
         self.listening_event = threading.Event()
         self.speaking_event = threading.Event()
         self.stop_event = threading.Event()
+        self.voice_available = True
+        self.last_error: str | None = None
         self.thread = threading.Thread(target=self._run_loop, daemon=True, name="aria-jarvis")
 
     def start(self) -> None:
@@ -115,32 +114,47 @@ class JarvisAssistant:
             self.thread.join(timeout=2.0)
 
     def _run_loop(self) -> None:
-        if pvporcupine is None or PvRecorder is None or sr is None:
+        if openwakeword is None or Model is None or sr is None:
+            self.voice_available = False
+            self.last_error = "Voice disabled: missing openWakeWord or SpeechRecognition dependency."
             return
 
-        access_key = os.getenv("PICOVOICE_ACCESS_KEY")
-        keyword_path = os.getenv("PORCUPINE_KEYWORD_PATH") or os.getenv("ARIA_KEYWORD_PATH")
-        if not access_key or not keyword_path:
-            return
+        wakeword_model_path = os.getenv("OPENWAKEWORD_MODEL_PATH")
+        built_in_wakeword = os.getenv("OPENWAKEWORD_BUILTIN", "hey_jarvis")
 
-        porcupine = None
-        recorder = None
+        wake_model = None
         try:
-            porcupine = pvporcupine.create(access_key=access_key, keyword_paths=[keyword_path])
-            recorder = PvRecorder(device_index=-1, frame_length=porcupine.frame_length)
-            recorder.start()
+            openwakeword.utils.download_models()
+            if wakeword_model_path:
+                wake_model = Model(wakeword_models=[wakeword_model_path])
+                wakeword_key = os.path.splitext(os.path.basename(wakeword_model_path))[0]
+            else:
+                wake_model = Model()
+                wakeword_key = built_in_wakeword
 
-            while not self.stop_event.is_set():
-                pcm = recorder.read()
-                if porcupine.process(pcm) >= 0:
-                    self._handle_wake_word()
-                    time.sleep(0.2)
+            recognizer = sr.Recognizer()
+            try:
+                with sr.Microphone(sample_rate=16000) as source:
+                    recognizer.adjust_for_ambient_noise(source, duration=0.5)
+                    chunk_size = int(16000 * 0.08) * 2
+
+                    while not self.stop_event.is_set():
+                        audio_chunk = source.stream.read(chunk_size, exception_on_overflow=False)
+                        pcm = np.frombuffer(audio_chunk, dtype=np.int16)
+                        prediction = wake_model.predict(pcm)
+                        if prediction.get(wakeword_key, 0.0) >= 0.5:
+                            self._handle_wake_word()
+                            time.sleep(0.5)
+            except Exception as exc:
+                self.voice_available = False
+                self.last_error = f"Voice disabled: {exc}"
+                return
+        except Exception as exc:
+            self.voice_available = False
+            self.last_error = f"Voice disabled: {exc}"
         finally:
-            if recorder is not None:
-                recorder.stop()
-                recorder.delete()
-            if porcupine is not None:
-                porcupine.delete()
+            if wake_model is not None:
+                del wake_model
 
     def _handle_wake_word(self) -> None:
         self.listening_event.set()

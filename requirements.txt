@@ -4,6 +4,5 @@ numpy
 SpeechRecognition
 pyttsx3
 python-dotenv
-pvporcupine
-pvrecorder
+openwakeword
 google-generativeai

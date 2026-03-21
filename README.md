@@ -33,15 +33,18 @@ python main.py
 # Optional Gemini vision
 GOOGLE_API_KEY=your_google_api_key
 
-# Optional wake word
-PICOVOICE_ACCESS_KEY=your_picovoice_access_key
-PORCUPINE_KEYWORD_PATH=path/to/hey-aria.ppn
+# Optional custom openWakeWord model
+OPENWAKEWORD_MODEL_PATH=C:\full\path\to\hey_aria.onnx
+
+# Optional built-in wake word override
+OPENWAKEWORD_BUILTIN=hey_jarvis
 ```
 
 Notes:
 
 - `GOOGLE_API_KEY` is optional. Without it, Gemini scene description is disabled and ARIA shows a warning overlay.
-- `PICOVOICE_ACCESS_KEY` and `PORCUPINE_KEYWORD_PATH` are optional. Without them, the wake-word listener stays disabled.
+- `OPENWAKEWORD_MODEL_PATH` is optional. If omitted, ARIA uses the built-in `hey_jarvis` wake word.
+- `OPENWAKEWORD_BUILTIN` is optional if you want a different built-in openWakeWord model name.
 - TTS uses offline `pyttsx3`, so no TTS API key is required.
 
 ## Gesture Reference
@@ -85,7 +88,7 @@ Webcam -> OpenCV Frame -> MediaPipe Hands -> Gesture Router
                                       |-> Dwell UI -> ui.py
                                       |-> Voice State Overlay -> jarvis.py
 
-jarvis.py -> SpeechRecognition / Porcupine
+jarvis.py -> openWakeWord + SpeechRecognition
 jarvis.py -> ai_utils.py -> Gemini Vision
 jarvis.py -> pyttsx3 offline speech
 
@@ -114,3 +117,4 @@ main.py -> render pipeline -> palette + toolbar + thumbnails + fps + warnings
 - MediaPipe processing uses a resized input capped at `640x480` for better performance.
 - Gemini responses are cached for 5 seconds to avoid redundant calls.
 - Canvas undo uses up to 10 stored snapshots.
+- Wake-word detection uses `openWakeWord`, with `hey_jarvis` as the default built-in model.
