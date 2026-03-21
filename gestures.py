@@ -75,3 +75,19 @@ def is_pinching(hand_landmarks, frame_width: int, frame_height: int, threshold: 
 
 def is_two_hand_resize(hand_landmarks_list) -> bool:
     return hand_landmarks_list is not None and len(hand_landmarks_list) == 2
+
+
+def point_in_rect(point: tuple[int, int], rect: tuple[int, int, int, int]) -> bool:
+    x, y = point
+    left, top, right, bottom = rect
+    return left <= x <= right and top <= y <= bottom
+
+
+def dwell_progress(start_time: float | None, dwell_seconds: float, now: float) -> float:
+    if start_time is None:
+        return 0.0
+    return max(0.0, min(1.0, (now - start_time) / dwell_seconds))
+
+
+def is_double_pinch(previous_pinch_time: float | None, now: float, threshold_seconds: float) -> bool:
+    return previous_pinch_time is not None and now - previous_pinch_time <= threshold_seconds

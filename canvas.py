@@ -13,7 +13,7 @@ class DrawingCanvas:
     def __init__(self, frame_shape: tuple[int, int, int]) -> None:
         self.canvas = np.zeros(frame_shape, dtype=np.uint8)
         self.strokes: list[dict[str, object]] = []
-        self.undo_stack: list[dict[str, object]] = []
+        self.undo_stack: list[np.ndarray] = [self.canvas.copy()]
         self._current_stroke: list[tuple[int, int]] = []
         self.brush_color = config.get_active_brush_color()
 
@@ -28,6 +28,14 @@ class DrawingCanvas:
             for start, end in zip(points, points[1:]):
                 cv2.line(self.canvas, start, end, color, LINE_THICKNESS)
 
+    def _push_snapshot(self) -> None:
+        if self.undo_stack and np.array_equal(self.undo_stack[-1], self.canvas):
+            return
+
+        self.undo_stack.append(self.canvas.copy())
+        if len(self.undo_stack) > 10:
+            self.undo_stack = self.undo_stack[-10:]
+
     def reset_stroke(self) -> None:
         if self._current_stroke:
             self.strokes.append(
@@ -37,6 +45,7 @@ class DrawingCanvas:
                 }
             )
             self._current_stroke.clear()
+            self._push_snapshot()
 
     def add_segment(self, start: tuple[int, int], end: tuple[int, int]) -> None:
         if not self._current_stroke:
@@ -46,28 +55,24 @@ class DrawingCanvas:
 
     def clear(self) -> None:
         self.canvas[:] = 0
-        self.undo_stack.extend(self.strokes)
-        if self._current_stroke:
-            self.undo_stack.append(
-                {
-                    "points": self._current_stroke.copy(),
-                    "color": self.brush_color,
-                }
-            )
         self.strokes.clear()
         self._current_stroke.clear()
+        self._push_snapshot()
 
     def undo_last_stroke(self) -> bool:
         if self._current_stroke:
             self._current_stroke.clear()
-            self._rebuild_canvas()
+            if self.undo_stack:
+                self.canvas[:] = self.undo_stack[-1]
             return True
 
-        if not self.strokes:
+        if len(self.undo_stack) <= 1:
             return False
 
-        self.undo_stack.append(self.strokes.pop())
-        self._rebuild_canvas()
+        self.undo_stack.pop()
+        self.canvas[:] = self.undo_stack[-1]
+        if self.strokes:
+            self.strokes.pop()
         return True
 
     def overlay_on(self, frame: np.ndarray, alpha: float) -> np.ndarray:
