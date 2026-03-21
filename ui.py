@@ -35,11 +35,12 @@ def _draw_panel(frame: np.ndarray, rect: tuple[int, int, int, int], color: tuple
 
 def get_palette_items(frame_width: int) -> list[dict[str, object]]:
     items = []
-    button_width = 96
-    button_height = 28
+    button_width = 90
+    button_height = 26
     spacing = 6
-    x = 16
-    y = 106
+    rail_padding = 12
+    x = rail_padding + 6
+    y = 104
     for color_name in PALETTE_ORDER:
         items.append(
             {
@@ -66,7 +67,7 @@ def draw_palette(
 
     first_left, first_top, _, _ = items[0]["rect"]
     _, _, last_right, last_bottom = items[-1]["rect"]
-    _draw_panel(frame, (first_left - 8, first_top - 8, last_right + 8, last_bottom + 8), PANEL_BG_COLOR, 0.32)
+    _draw_panel(frame, (first_left - 10, first_top - 10, last_right + 10, last_bottom + 10), PANEL_BG_COLOR, 0.32)
     for item in items:
         left, top, right, bottom = item["rect"]
         color_name = item["color_name"]
@@ -95,21 +96,27 @@ def draw_palette(
 
 def get_toolbar_items(frame_width: int, frame_height: int) -> list[dict[str, object]]:
     items = []
-    spacing = 14
-    button_width = max(132, (frame_width - 56 - (len(TOOLBAR_ACTIONS) - 1) * spacing) // len(TOOLBAR_ACTIONS))
+    side_margin = 16
+    spacing = 10
+    available_width = max(320, frame_width - side_margin * 2)
+    button_width = max(100, (available_width - (len(TOOLBAR_ACTIONS) - 1) * spacing) // len(TOOLBAR_ACTIONS))
     total_width = len(TOOLBAR_ACTIONS) * button_width + (len(TOOLBAR_ACTIONS) - 1) * spacing
-    start_x = max(28, (frame_width - total_width) // 2)
-    top = frame_height - TOOLBAR_HEIGHT + 12
-    bottom = frame_height - 10
+    if total_width > available_width:
+        button_width = max(88, (available_width - (len(TOOLBAR_ACTIONS) - 1) * spacing) // len(TOOLBAR_ACTIONS))
+        total_width = len(TOOLBAR_ACTIONS) * button_width + (len(TOOLBAR_ACTIONS) - 1) * spacing
+    start_x = max(side_margin, (frame_width - total_width) // 2)
+    top = frame_height - TOOLBAR_HEIGHT + 14
+    bottom = frame_height - 12
 
     for index, (action_id, label) in enumerate(TOOLBAR_ACTIONS):
         left = start_x + index * (button_width + spacing)
+        right = min(frame_width - side_margin, left + button_width)
         items.append(
             {
                 "id": f"toolbar:{action_id}",
                 "action": action_id,
                 "label": label,
-                "rect": (left, top, left + button_width, bottom),
+                "rect": (left, top, right, bottom),
             }
         )
     return items
@@ -131,12 +138,14 @@ def draw_toolbar(
         left, item_top, right, bottom = item["rect"]
         background = BUTTON_ACTIVE_COLOR if item["action"] == active_action else (52, 52, 52)
         cv2.rectangle(frame, (left, item_top), (right, bottom), background, -1)
+        text_scale = 0.55 if (right - left) < 120 else 0.62
+        text_x = left + 10 if (right - left) < 120 else left + 14
         cv2.putText(
             frame,
             item["label"],
-            (left + 14, item_top + 30),
+            (text_x, item_top + 30),
             cv2.FONT_HERSHEY_SIMPLEX,
-            0.62,
+            text_scale,
             BUTTON_TEXT_COLOR,
             2,
             cv2.LINE_AA,
