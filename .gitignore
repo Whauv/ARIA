@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+.env
+aria_snapshot.png
+.venv/
+.tmp/
