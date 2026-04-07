@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import threading
 import time
@@ -7,10 +8,15 @@ from dataclasses import dataclass
 from typing import Callable, Optional
 
 import numpy as np
-from dotenv import load_dotenv
 
 import config
 from ai_utils import describe_image_with_gemini
+
+try:
+    from dotenv import load_dotenv
+except ImportError:  # pragma: no cover - optional dependency
+    def load_dotenv() -> bool:
+        return False
 
 try:
     import openwakeword
@@ -28,6 +34,9 @@ try:
     import pyttsx3
 except ImportError:  # pragma: no cover - optional dependency
     pyttsx3 = None
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -87,7 +96,7 @@ def command_handler(command: str, context: JarvisContext) -> str:
         return "There is nothing to undo."
 
     if normalized == "save":
-        if context.save_snapshot("aria_snapshot.png"):
+        if context.save_snapshot(config.DEFAULT_SAVE_PATH):
             return "Saved!"
         return "I could not save the snapshot."
 
@@ -124,11 +133,14 @@ class JarvisAssistant:
 
         wake_model = None
         try:
-            openwakeword.utils.download_models()
             if wakeword_model_path:
                 wake_model = Model(wakeword_models=[wakeword_model_path])
                 wakeword_key = os.path.splitext(os.path.basename(wakeword_model_path))[0]
             else:
+                try:
+                    openwakeword.utils.download_models()
+                except Exception as exc:  # pragma: no cover - environment dependent
+                    logger.warning("openWakeWord model download failed, using local cache if present: %s", exc)
                 wake_model = Model()
                 wakeword_key = built_in_wakeword
 
@@ -142,16 +154,18 @@ class JarvisAssistant:
                         audio_chunk = source.stream.read(chunk_size, exception_on_overflow=False)
                         pcm = np.frombuffer(audio_chunk, dtype=np.int16)
                         prediction = wake_model.predict(pcm)
-                        if prediction.get(wakeword_key, 0.0) >= 0.5:
+                        if prediction.get(wakeword_key, 0.0) >= config.OPENWAKEWORD_THRESHOLD:
                             self._handle_wake_word()
                             time.sleep(0.5)
             except Exception as exc:
                 self.voice_available = False
                 self.last_error = f"Voice disabled: {exc}"
+                logger.warning("Voice input loop disabled: %s", exc)
                 return
         except Exception as exc:
             self.voice_available = False
             self.last_error = f"Voice disabled: {exc}"
+            logger.warning("Voice initialization disabled: %s", exc)
         finally:
             if wake_model is not None:
                 del wake_model

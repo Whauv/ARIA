@@ -6,11 +6,14 @@ import cv2
 import numpy as np
 
 import config
-from config import LINE_THICKNESS
+from config import LINE_THICKNESS, MAX_UNDO_SNAPSHOTS
 
 
 class DrawingCanvas:
     def __init__(self, frame_shape: tuple[int, int, int]) -> None:
+        if len(frame_shape) != 3:
+            raise ValueError("frame_shape must be a 3D image shape")
+
         self.canvas = np.zeros(frame_shape, dtype=np.uint8)
         self.strokes: list[dict[str, object]] = []
         self.undo_stack: list[np.ndarray] = [self.canvas.copy()]
@@ -33,8 +36,8 @@ class DrawingCanvas:
             return
 
         self.undo_stack.append(self.canvas.copy())
-        if len(self.undo_stack) > 10:
-            self.undo_stack = self.undo_stack[-10:]
+        if len(self.undo_stack) > MAX_UNDO_SNAPSHOTS:
+            self.undo_stack = self.undo_stack[-MAX_UNDO_SNAPSHOTS:]
 
     def reset_stroke(self) -> None:
         if self._current_stroke:
@@ -48,6 +51,8 @@ class DrawingCanvas:
             self._push_snapshot()
 
     def add_segment(self, start: tuple[int, int], end: tuple[int, int]) -> None:
+        if start is None or end is None:
+            return
         if not self._current_stroke:
             self._current_stroke.append(start)
         self._current_stroke.append(end)
