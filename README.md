@@ -1,15 +1,14 @@
 # ARIA
 
-Augmented Reality Intelligence Assistant is a Python computer-vision drawing workspace that combines:
+Augmented Reality Intelligence Assistant is a Python computer-vision workspace for air drawing, sprite manipulation, and voice-assisted scene understanding.
+
+## Core Capabilities
 
 - Air drawing with MediaPipe Hands
 - Sprite creation, selection, dragging, and resizing
 - Voice-triggered assistant controls
 - Visual AI scene description through Gemini
-
-## Demo GIF
-
-`Demo GIF coming soon`
+- Offline-friendly TTS with `pyttsx3`
 
 ## Installation
 
@@ -25,6 +24,13 @@ pip install -r requirements.txt
 
 ```bash
 python main.py
+```
+
+5. Run the automated checks:
+
+```bash
+python -m unittest discover -s tests
+python scripts/run_checks.py
 ```
 
 ## .env Format
@@ -44,7 +50,7 @@ Notes:
 
 - `GOOGLE_API_KEY` is optional. Without it, Gemini scene description is disabled and ARIA shows a warning overlay.
 - `OPENWAKEWORD_MODEL_PATH` is optional. If omitted, ARIA uses the built-in `hey_jarvis` wake word.
-- `OPENWAKEWORD_BUILTIN` is optional if you want a different built-in openWakeWord model name.
+- `OPENWAKEWORD_BUILTIN` is optional if you want a different built-in `openWakeWord` model name.
 - TTS uses offline `pyttsx3`, so no TTS API key is required.
 
 ## Gesture Reference
@@ -69,46 +75,47 @@ Notes:
 | Voice: "undo" | Undo last canvas snapshot |
 | Voice: "save" | Save `aria_snapshot.png` |
 
-## Product Features
-
-- Top palette with dwell selection for colors and eraser
-- Bottom toolbar with dwell actions for draw/select/clear/save/undo
-- Brush preview near the fingertip
-- Sprite thumbnail strip on the right edge
-- FPS counter and active mode indicator
-- Voice status overlays for idle, listening, and speaking
-- Free-tier friendly assistant stack with offline TTS
-
 ## Architecture
 
 ```text
-Webcam -> OpenCV Frame -> MediaPipe Hands -> Gesture Router
-                                      |-> Draw Mode -> canvas.py
-                                      |-> Select Mode -> sprite.py
-                                      |-> Dwell UI -> ui.py
-                                      |-> Voice State Overlay -> jarvis.py
+Webcam -> OpenCV Frame -> MediaPipe Hands -> app_runner.py
+                                      |-> runtime_state.py
+                                      |-> runtime_controllers.py
+                                      |   |-> Draw workflow -> canvas.py
+                                      |   |-> Sprite workflow -> sprite.py
+                                      |   `-> Dwell UI workflow -> ui.py
+                                      `-> Voice State Overlay -> jarvis.py
 
 jarvis.py -> openWakeWord + SpeechRecognition
 jarvis.py -> ai_utils.py -> Gemini Vision
 jarvis.py -> pyttsx3 offline speech
 
-main.py -> render pipeline -> palette + toolbar + thumbnails + fps + warnings
+main.py -> render pipeline + controller wiring
 ```
 
 ## File Layout
 
 ```text
 .
-├── main.py
-├── canvas.py
-├── sprite.py
-├── gestures.py
-├── jarvis.py
-├── ai_utils.py
-├── ui.py
-├── config.py
-├── requirements.txt
-└── README.md
+|-- main.py
+|-- app_runner.py
+|-- canvas.py
+|-- sprite.py
+|-- gestures.py
+|-- jarvis.py
+|-- ai_utils.py
+|-- ui.py
+|-- config.py
+|-- runtime_state.py
+|-- runtime_controllers.py
+|-- requirements.txt
+|-- README.md
+|-- scripts/
+|   `-- run_checks.py
+`-- tests/
+    |-- test_app_runner.py
+    `-- test_core.py
+    `-- test_runtime.py
 ```
 
 ## Notes
@@ -118,3 +125,6 @@ main.py -> render pipeline -> palette + toolbar + thumbnails + fps + warnings
 - Gemini responses are cached for 5 seconds to avoid redundant calls.
 - Canvas undo uses up to 10 stored snapshots.
 - Wake-word detection uses `openWakeWord`, with `hey_jarvis` as the default built-in model.
+- ARIA supports both `google-genai` and the legacy `google-generativeai` package during the Gemini transition.
+- Interaction state and workflow controllers are separated from the OpenCV loop to improve testability and maintainability.
+- `scripts/run_checks.py` provides a single CI-friendly command for syntax and unit test verification.
