@@ -5,7 +5,7 @@ from typing import Optional
 
 import numpy as np
 
-from config import STATUS_IDLE
+from ..config import DEFAULT_BRUSH_NAME, STATUS_IDLE
 
 
 @dataclass
@@ -23,7 +23,7 @@ class RuntimeState:
     status_text: str = STATUS_IDLE
     status_expires_at: Optional[float] = None
     interaction_mode: str = "draw_mode"
-    brush_name: str = "green"
+    brush_name: str = DEFAULT_BRUSH_NAME
     fps: float = 0.0
     ai_warning_text: Optional[str] = None
     latest_frame: Optional[np.ndarray] = None

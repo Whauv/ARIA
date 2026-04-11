@@ -5,8 +5,8 @@ from typing import Optional
 import cv2
 import numpy as np
 
-import config
-from config import LINE_THICKNESS, MAX_UNDO_SNAPSHOTS
+from .. import config
+from ..config import LINE_THICKNESS, MAX_UNDO_SNAPSHOTS
 
 
 class DrawingCanvas:
@@ -18,7 +18,7 @@ class DrawingCanvas:
         self.strokes: list[dict[str, object]] = []
         self.undo_stack: list[np.ndarray] = [self.canvas.copy()]
         self._current_stroke: list[tuple[int, int]] = []
-        self.brush_color = config.get_active_brush_color()
+        self.brush_color = config.get_brush_color(config.DEFAULT_BRUSH_NAME) or config.DRAW_COLOR
 
     def set_brush_color(self, color: tuple[int, int, int]) -> None:
         self.brush_color = color
@@ -81,6 +81,8 @@ class DrawingCanvas:
         return True
 
     def overlay_on(self, frame: np.ndarray, alpha: float) -> np.ndarray:
+        if not hasattr(cv2, "addWeighted"):
+            return np.where(self.canvas > 0, self.canvas, frame).astype(frame.dtype, copy=False)
         return cv2.addWeighted(frame, 1.0, self.canvas, alpha, 0.0)
 
 

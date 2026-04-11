@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Optional
+from typing import Callable
 
 import cv2
 import numpy as np
 
-import config
-from canvas import DrawingCanvas
-from config import (
+from .. import config
+from ..config import (
     DOUBLE_PINCH_SECONDS,
     DRAG_SMOOTHING_NEW_WEIGHT,
     DRAG_SMOOTHING_PREV_WEIGHT,
@@ -16,15 +15,16 @@ from config import (
     FINISH_HOLD_SECONDS,
     MAX_MEDIAPIPE_HEIGHT,
     MAX_MEDIAPIPE_WIDTH,
-    PINCH_RELEASE_DISTANCE,
     STATUS_DRAWING,
     STATUS_IDLE,
     STATUS_PAUSED,
     STATUS_SPRITE_CREATED,
 )
-from gestures import is_closed_fist, is_double_pinch, is_index_and_middle_up, is_index_only_up, point_in_rect
-from runtime_state import RuntimeState
-from sprite import create_sprite_from_canvas
+from ..drawing.canvas import DrawingCanvas
+from ..drawing.sprite import create_sprite_from_canvas
+from ..ui.ui import PaletteItem, ThumbnailItem, ToolbarItem
+from ..vision.gestures import is_closed_fist, is_double_pinch, is_index_and_middle_up, is_index_only_up, point_in_rect
+from .state import RuntimeState
 
 
 def clear_sprite_selection(sprites) -> None:
@@ -78,6 +78,10 @@ def resize_for_mediapipe(frame: np.ndarray) -> np.ndarray:
 
 
 def enhance_low_light(frame: np.ndarray) -> np.ndarray:
+    required_attrs = ("cvtColor", "split", "createCLAHE", "merge", "LUT", "COLOR_BGR2LAB", "COLOR_LAB2BGR")
+    if not all(hasattr(cv2, attr) for attr in required_attrs):
+        return frame
+
     lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
     l_channel, a_channel, b_channel = cv2.split(lab)
     mean_luma = float(np.mean(l_channel))
@@ -125,8 +129,8 @@ class UIInteractionController:
         self,
         hover_point: tuple[int, int] | None,
         pinch_active: bool,
-        toolbar_items,
-        palette_items,
+        toolbar_items: list[ToolbarItem],
+        palette_items: list[PaletteItem],
     ) -> str | None:
         if hover_point is None or pinch_active:
             return None
@@ -182,7 +186,7 @@ class SpriteInteractionController:
         self,
         state: RuntimeState,
         sprites,
-        thumbnail_items,
+        thumbnail_items: list[ThumbnailItem],
         hit_point: tuple[int, int] | None,
         current_point: tuple[int, int] | None,
         pinch_active: bool,

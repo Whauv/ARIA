@@ -5,8 +5,9 @@ from unittest.mock import Mock, patch
 
 import numpy as np
 
-import config
-from runtime_controllers import (
+from aria import config
+from aria.drawing.sprite import Sprite
+from aria.runtime.controllers import (
     DrawingInteractionController,
     SpriteInteractionController,
     UIActionCallbacks,
@@ -15,8 +16,7 @@ from runtime_controllers import (
     clear_sprite_selection,
     get_selected_sprite,
 )
-from runtime_state import RuntimeState
-from sprite import Sprite
+from aria.runtime.state import RuntimeState
 
 
 class UIInteractionControllerTests(unittest.TestCase):
@@ -117,9 +117,9 @@ class DrawingInteractionControllerTests(unittest.TestCase):
         canvas = Mock()
         controller = DrawingInteractionController()
 
-        with patch("runtime_controllers.is_closed_fist", return_value=False), patch(
-            "runtime_controllers.is_index_only_up", return_value=True
-        ), patch("runtime_controllers.is_index_and_middle_up", return_value=False):
+        with patch("aria.runtime.controllers.is_closed_fist", return_value=False), patch(
+            "aria.runtime.controllers.is_index_only_up", return_value=True
+        ), patch("aria.runtime.controllers.is_index_and_middle_up", return_value=False):
             controller.handle_draw_mode(
                 state=state,
                 hand_landmarks=object(),

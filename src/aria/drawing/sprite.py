@@ -6,7 +6,7 @@ from typing import Optional
 import cv2
 import numpy as np
 
-from config import MAX_SPRITE_SIZE, MIN_SPRITE_SIZE, SELECTED_BORDER_COLOR, SELECTION_BORDER_THICKNESS
+from ..config import MAX_SPRITE_SIZE, MIN_SPRITE_SIZE, SELECTED_BORDER_COLOR, SELECTION_BORDER_THICKNESS
 
 
 @dataclass

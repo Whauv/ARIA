@@ -1,6 +1,11 @@
 __pycache__/
 *.pyc
 .env
+.env.local
 aria_snapshot.png
 .venv/
 .tmp/
+.pytest_cache/
+.ruff_cache/
+data/
+*.pkl

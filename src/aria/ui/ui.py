@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from typing import Iterable
+from typing import Iterable, TypedDict
 
 import cv2
 import numpy as np
 
-from config import (
+from ..config import (
     BRUSH_COLORS,
     BRUSH_PREVIEW_RADIUS,
     BUTTON_ACTIVE_COLOR,
@@ -13,7 +13,6 @@ from config import (
     BUTTON_TEXT_COLOR,
     ERASER_COLOR,
     FPS_COLOR,
-    PALETTE_HEIGHT,
     PALETTE_ORDER,
     PANEL_BG_COLOR,
     THUMBNAIL_BORDER_COLOR,
@@ -26,6 +25,27 @@ from config import (
 )
 
 
+class PaletteItem(TypedDict):
+    id: str
+    label: str
+    color_name: str
+    preview_color: tuple[int, int, int]
+    rect: tuple[int, int, int, int]
+
+
+class ToolbarItem(TypedDict):
+    id: str
+    action: str
+    label: str
+    rect: tuple[int, int, int, int]
+
+
+class ThumbnailItem(TypedDict):
+    id: str
+    rect: tuple[int, int, int, int]
+    sprite: object
+
+
 def _draw_panel(frame: np.ndarray, rect: tuple[int, int, int, int], color: tuple[int, int, int], alpha: float) -> None:
     left, top, right, bottom = rect
     overlay = frame.copy()
@@ -33,8 +53,8 @@ def _draw_panel(frame: np.ndarray, rect: tuple[int, int, int, int], color: tuple
     frame[:] = cv2.addWeighted(overlay, alpha, frame, 1.0 - alpha, 0.0)
 
 
-def get_palette_items(frame_width: int) -> list[dict[str, object]]:
-    items = []
+def get_palette_items(frame_width: int) -> list[PaletteItem]:
+    items: list[PaletteItem] = []
     button_width = 90
     button_height = 26
     spacing = 6
@@ -55,13 +75,7 @@ def get_palette_items(frame_width: int) -> list[dict[str, object]]:
     return items
 
 
-def draw_palette(
-    frame: np.ndarray,
-    items: list[dict[str, object]],
-    active_color_name: str,
-    hover_target_id: str | None,
-    dwell_ratio: float,
-) -> None:
+def draw_palette(frame: np.ndarray, items: list[PaletteItem], active_color_name: str, hover_target_id: str | None, dwell_ratio: float) -> None:
     if not items:
         return
 
@@ -94,8 +108,8 @@ def draw_palette(
             cv2.rectangle(frame, (left, bottom - 4), (left + progress_width, bottom), BUTTON_HOVER_COLOR, -1)
 
 
-def get_toolbar_items(frame_width: int, frame_height: int) -> list[dict[str, object]]:
-    items = []
+def get_toolbar_items(frame_width: int, frame_height: int) -> list[ToolbarItem]:
+    items: list[ToolbarItem] = []
     side_margin = 16
     spacing = 10
     available_width = max(320, frame_width - side_margin * 2)
@@ -122,13 +136,7 @@ def get_toolbar_items(frame_width: int, frame_height: int) -> list[dict[str, obj
     return items
 
 
-def draw_toolbar(
-    frame: np.ndarray,
-    items: list[dict[str, object]],
-    active_action: str,
-    hover_target_id: str | None,
-    dwell_ratio: float,
-) -> None:
+def draw_toolbar(frame: np.ndarray, items: list[ToolbarItem], active_action: str, hover_target_id: str | None, dwell_ratio: float) -> None:
     if not items:
         return
 
@@ -155,8 +163,8 @@ def draw_toolbar(
             cv2.rectangle(frame, (left, bottom - 4), (left + progress_width, bottom), BUTTON_HOVER_COLOR, -1)
 
 
-def get_thumbnail_items(frame: np.ndarray, sprites: Iterable) -> list[dict[str, object]]:
-    items = []
+def get_thumbnail_items(frame: np.ndarray, sprites: Iterable) -> list[ThumbnailItem]:
+    items: list[ThumbnailItem] = []
     x1 = frame.shape[1] - THUMBNAIL_WIDTH
     y = 104
     for index, sprite in enumerate(sorted(sprites, key=lambda item: item.z_index, reverse=True)):
@@ -166,7 +174,7 @@ def get_thumbnail_items(frame: np.ndarray, sprites: Iterable) -> list[dict[str, 
     return items
 
 
-def draw_thumbnail_strip(frame: np.ndarray, items: list[dict[str, object]], hover_target_id: str | None) -> None:
+def draw_thumbnail_strip(frame: np.ndarray, items: list[ThumbnailItem], hover_target_id: str | None) -> None:
     if not items:
         return
 

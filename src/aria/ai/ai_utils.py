@@ -10,7 +10,7 @@ from typing import Optional
 import cv2
 import numpy as np
 
-from config import GEMINI_CACHE_SECONDS
+from ..config import GEMINI_CACHE_SECONDS
 
 try:
     from dotenv import load_dotenv
