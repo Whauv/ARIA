@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Optional
+from typing import Callable
 
 import cv2
 import numpy as np
@@ -15,7 +15,6 @@ from ..config import (
     FINISH_HOLD_SECONDS,
     MAX_MEDIAPIPE_HEIGHT,
     MAX_MEDIAPIPE_WIDTH,
-    PINCH_RELEASE_DISTANCE,
     STATUS_DRAWING,
     STATUS_IDLE,
     STATUS_PAUSED,
