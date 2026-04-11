@@ -6,11 +6,11 @@ import unittest
 import numpy as np
 import cv2
 
-import ai_utils
-import config
-from canvas import DrawingCanvas, smooth_point
-from gestures import dwell_progress, get_fingertip_distance, is_double_pinch, point_in_rect
-from sprite import create_sprite_from_canvas
+from aria import config
+from aria.ai import ai_utils
+from aria.drawing.canvas import DrawingCanvas, smooth_point
+from aria.drawing.sprite import create_sprite_from_canvas
+from aria.vision.gestures import dwell_progress, get_fingertip_distance, is_double_pinch, point_in_rect
 
 
 HAS_FULL_CV2 = all(hasattr(cv2, attr) for attr in ("line", "imencode", "cvtColor"))
@@ -95,14 +95,10 @@ class AiUtilsTests(unittest.TestCase):
 
 
 class ConfigTests(unittest.TestCase):
-    def test_set_active_brush_color(self) -> None:
-        previous = config.get_active_brush_color()
-        try:
-            changed = config.set_active_brush_color("red")
-            self.assertEqual(changed, config.BRUSH_COLORS["red"])
-            self.assertEqual(config.get_active_brush_color(), config.BRUSH_COLORS["red"])
-        finally:
-            config.ACTIVE_BRUSH_COLOR = previous
+    def test_get_brush_color(self) -> None:
+        self.assertEqual(config.get_brush_color("red"), config.BRUSH_COLORS["red"])
+        self.assertEqual(config.get_brush_color("RED"), config.BRUSH_COLORS["red"])
+        self.assertIsNone(config.get_brush_color("missing"))
 
 
 if __name__ == "__main__":

@@ -9,8 +9,9 @@ from typing import Callable, Optional
 
 import numpy as np
 
-import config
-from ai_utils import describe_image_with_gemini
+from .. import config
+from ..ai.ai_utils import describe_image_with_gemini
+from .command_intents import CommandIntent, parse_command
 
 try:
     from dotenv import load_dotenv
@@ -51,9 +52,9 @@ class JarvisContext:
 
 
 def command_handler(command: str, context: JarvisContext) -> str:
-    normalized = command.lower().strip()
+    parsed_command = parse_command(command)
 
-    if "what did i draw" in normalized or "what is this" in normalized:
+    if parsed_command.intent == CommandIntent.DESCRIBE_SCENE:
         frame = context.get_current_frame()
         if frame is None:
             return "I do not have a frame to inspect yet."
@@ -62,40 +63,37 @@ def command_handler(command: str, context: JarvisContext) -> str:
             "Describe what is drawn or placed in this image in one sentence.",
         )
 
-    if "change color to" in normalized:
-        color_name = normalized.split("change color to", 1)[1].strip()
-        for supported_color in config.BRUSH_COLORS:
-            if supported_color in color_name:
-                if context.set_brush_color(supported_color):
-                    return f"Changed the brush color to {supported_color}."
+    if parsed_command.intent == CommandIntent.CHANGE_BRUSH_COLOR:
+        if parsed_command.color_name and context.set_brush_color(parsed_command.color_name):
+            return f"Changed the brush color to {parsed_command.color_name}."
         supported = ", ".join(sorted(config.BRUSH_COLORS))
         return f"I do not know that color yet. Try one of: {supported}."
 
-    if normalized in {"clear", "clear canvas"}:
+    if parsed_command.intent == CommandIntent.CLEAR_CANVAS:
         context.clear_canvas()
         return "Canvas cleared."
 
-    if normalized in {"delete", "remove it"}:
+    if parsed_command.intent == CommandIntent.DELETE_SELECTION:
         if context.delete_selected_sprite():
             return "Removed the selected sprite."
         return "There is no selected sprite to remove."
 
-    if normalized in {"make it bigger", "enlarge"}:
-        if context.scale_selected_sprite(1.5):
+    if parsed_command.intent == CommandIntent.SCALE_SELECTION and parsed_command.scale_factor and parsed_command.scale_factor > 1.0:
+        if context.scale_selected_sprite(parsed_command.scale_factor):
             return "Made the selected sprite bigger."
         return "Select a sprite first."
 
-    if normalized in {"make it smaller", "shrink"}:
-        if context.scale_selected_sprite(0.5):
+    if parsed_command.intent == CommandIntent.SCALE_SELECTION and parsed_command.scale_factor and parsed_command.scale_factor < 1.0:
+        if context.scale_selected_sprite(parsed_command.scale_factor):
             return "Made the selected sprite smaller."
         return "Select a sprite first."
 
-    if normalized == "undo":
+    if parsed_command.intent == CommandIntent.UNDO:
         if context.undo_last_stroke():
             return "Undid the last stroke."
         return "There is nothing to undo."
 
-    if normalized == "save":
+    if parsed_command.intent == CommandIntent.SAVE:
         if context.save_snapshot(config.DEFAULT_SAVE_PATH):
             return "Saved!"
         return "I could not save the snapshot."
@@ -146,9 +144,9 @@ class JarvisAssistant:
 
             recognizer = sr.Recognizer()
             try:
-                with sr.Microphone(sample_rate=16000) as source:
-                    recognizer.adjust_for_ambient_noise(source, duration=0.5)
-                    chunk_size = int(16000 * 0.08) * 2
+                with sr.Microphone(sample_rate=config.VOICE_SAMPLE_RATE) as source:
+                    recognizer.adjust_for_ambient_noise(source, duration=config.VOICE_WAKEWORD_CALIBRATION_SECONDS)
+                    chunk_size = int(config.VOICE_SAMPLE_RATE * config.VOICE_CHUNK_SECONDS) * 2
 
                     while not self.stop_event.is_set():
                         audio_chunk = source.stream.read(chunk_size, exception_on_overflow=False)
@@ -156,7 +154,7 @@ class JarvisAssistant:
                         prediction = wake_model.predict(pcm)
                         if prediction.get(wakeword_key, 0.0) >= config.OPENWAKEWORD_THRESHOLD:
                             self._handle_wake_word()
-                            time.sleep(0.5)
+                            time.sleep(config.VOICE_WAKEWORD_COOLDOWN_SECONDS)
             except Exception as exc:
                 self.voice_available = False
                 self.last_error = f"Voice disabled: {exc}"
@@ -187,14 +185,34 @@ class JarvisAssistant:
     def _capture_command(self) -> Optional[str]:
         if sr is None:
             return None
+        if not config.ALLOW_CLOUD_SPEECH_RECOGNITION:
+            self.last_error = "Voice command transcription disabled by configuration."
+            logger.info("Cloud speech recognition disabled by configuration.")
+            return None
 
         recognizer = sr.Recognizer()
         try:
             with sr.Microphone() as source:
-                recognizer.adjust_for_ambient_noise(source, duration=0.3)
-                audio = recognizer.listen(source, timeout=5, phrase_time_limit=6)
+                recognizer.adjust_for_ambient_noise(source, duration=config.VOICE_AMBIENT_CALIBRATION_SECONDS)
+                audio = recognizer.listen(
+                    source,
+                    timeout=config.VOICE_COMMAND_TIMEOUT_SECONDS,
+                    phrase_time_limit=config.VOICE_COMMAND_PHRASE_LIMIT_SECONDS,
+                )
             return recognizer.recognize_google(audio)
-        except Exception:
+        except sr.WaitTimeoutError:
+            logger.info("Voice command timed out waiting for speech.")
+            return None
+        except sr.UnknownValueError:
+            logger.info("Voice command could not be understood.")
+            return None
+        except sr.RequestError as exc:
+            self.last_error = f"Speech recognition request failed: {exc}"
+            logger.warning("Speech recognition request failed: %s", exc)
+            return None
+        except Exception as exc:
+            self.last_error = f"Voice capture failed: {exc}"
+            logger.warning("Voice capture failed: %s", exc)
             return None
 
     def _speak_async(self, text: str) -> None:
@@ -219,5 +237,6 @@ class JarvisAssistant:
             engine.say(text)
             engine.runAndWait()
             engine.stop()
-        except Exception:
+        except Exception as exc:
+            logger.warning("TTS synthesis failed: %s", exc)
             return

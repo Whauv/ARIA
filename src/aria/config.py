@@ -1,5 +1,9 @@
+from __future__ import annotations
+
+import os
+
 DRAW_COLOR = (0, 255, 0)
-ACTIVE_BRUSH_COLOR = DRAW_COLOR
+DEFAULT_BRUSH_NAME = "green"
 DEFAULT_SAVE_PATH = "aria_snapshot.png"
 STATUS_COLOR = (255, 255, 255)
 STATUS_BG_COLOR = (30, 30, 30)
@@ -58,6 +62,18 @@ MIN_FPS_WARNING = 20
 GEMINI_CACHE_SECONDS = 5
 MAX_UNDO_SNAPSHOTS = 10
 OPENWAKEWORD_THRESHOLD = 0.5
+VOICE_SAMPLE_RATE = 16000
+VOICE_CHUNK_SECONDS = 0.08
+VOICE_WAKEWORD_COOLDOWN_SECONDS = 0.5
+VOICE_COMMAND_TIMEOUT_SECONDS = 5
+VOICE_COMMAND_PHRASE_LIMIT_SECONDS = 6
+VOICE_AMBIENT_CALIBRATION_SECONDS = 0.3
+VOICE_WAKEWORD_CALIBRATION_SECONDS = 0.5
+ALLOW_CLOUD_SPEECH_RECOGNITION = os.getenv("ALLOW_CLOUD_SPEECH_RECOGNITION", "1").strip().lower() not in {
+    "0",
+    "false",
+    "no",
+}
 
 STATUS_DRAWING = "Drawing"
 STATUS_PAUSED = "Paused"
@@ -99,16 +115,5 @@ TOOLBAR_ACTIONS = [
 ]
 
 
-def get_active_brush_color() -> tuple[int, int, int]:
-    return ACTIVE_BRUSH_COLOR
-
-
-def set_active_brush_color(color_name: str) -> tuple[int, int, int] | None:
-    global ACTIVE_BRUSH_COLOR
-
-    color = BRUSH_COLORS.get(color_name.lower())
-    if color is None:
-        return None
-
-    ACTIVE_BRUSH_COLOR = color
-    return color
+def get_brush_color(color_name: str) -> tuple[int, int, int] | None:
+    return BRUSH_COLORS.get(color_name.lower())

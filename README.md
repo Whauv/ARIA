@@ -44,6 +44,9 @@ OPENWAKEWORD_MODEL_PATH=C:\full\path\to\hey_aria.onnx
 
 # Optional built-in wake word override
 OPENWAKEWORD_BUILTIN=hey_jarvis
+
+# Optional privacy control for cloud transcription
+ALLOW_CLOUD_SPEECH_RECOGNITION=1
 ```
 
 Notes:
@@ -51,6 +54,7 @@ Notes:
 - `GOOGLE_API_KEY` is optional. Without it, Gemini scene description is disabled and ARIA shows a warning overlay.
 - `OPENWAKEWORD_MODEL_PATH` is optional. If omitted, ARIA uses the built-in `hey_jarvis` wake word.
 - `OPENWAKEWORD_BUILTIN` is optional if you want a different built-in `openWakeWord` model name.
+- `ALLOW_CLOUD_SPEECH_RECOGNITION=0` disables cloud speech transcription for voice commands while leaving the local wake-word flow intact.
 - TTS uses offline `pyttsx3`, so no TTS API key is required.
 
 ## Gesture Reference
@@ -78,19 +82,16 @@ Notes:
 ## Architecture
 
 ```text
-Webcam -> OpenCV Frame -> MediaPipe Hands -> app_runner.py
-                                      |-> runtime_state.py
-                                      |-> runtime_controllers.py
-                                      |   |-> Draw workflow -> canvas.py
-                                      |   |-> Sprite workflow -> sprite.py
-                                      |   `-> Dwell UI workflow -> ui.py
-                                      `-> Voice State Overlay -> jarvis.py
-
-jarvis.py -> openWakeWord + SpeechRecognition
-jarvis.py -> ai_utils.py -> Gemini Vision
-jarvis.py -> pyttsx3 offline speech
-
-main.py -> render pipeline + controller wiring
+main.py -> src/aria/__main__.py -> app_runner.py
+app_runner.py -> runtime/state.py
+app_runner.py -> runtime/controllers.py
+app_runner.py -> runtime/services.py
+app_runner.py -> drawing/canvas.py
+app_runner.py -> drawing/sprite.py
+app_runner.py -> ui/ui.py
+app_runner.py -> assistant/jarvis.py
+assistant/jarvis.py -> assistant/command_intents.py
+assistant/jarvis.py -> ai/ai_utils.py
 ```
 
 ## File Layout
@@ -98,24 +99,33 @@ main.py -> render pipeline + controller wiring
 ```text
 .
 |-- main.py
-|-- app_runner.py
-|-- canvas.py
-|-- sprite.py
-|-- gestures.py
-|-- jarvis.py
-|-- ai_utils.py
-|-- ui.py
-|-- config.py
-|-- runtime_state.py
-|-- runtime_controllers.py
+|-- pyproject.toml
 |-- requirements.txt
 |-- README.md
+|-- AGENTS.md
+|-- CONTRIBUTING.md
+|-- LICENSE
+|-- .env.example
+|-- src/
+|   |-- README.md
+|   `-- aria/
+|       |-- __main__.py
+|       |-- app_runner.py
+|       |-- config.py
+|       |-- README.md
+|       |-- ai/
+|       |-- assistant/
+|       |-- drawing/
+|       |-- runtime/
+|       |-- ui/
+|       `-- vision/
 |-- scripts/
+|   |-- README.md
 |   `-- run_checks.py
 `-- tests/
-    |-- test_app_runner.py
-    `-- test_core.py
-    `-- test_runtime.py
+    |-- README.md
+    |-- unit/
+    `-- integration/
 ```
 
 ## Notes
@@ -125,6 +135,7 @@ main.py -> render pipeline + controller wiring
 - Gemini responses are cached for 5 seconds to avoid redundant calls.
 - Canvas undo uses up to 10 stored snapshots.
 - Wake-word detection uses `openWakeWord`, with `hey_jarvis` as the default built-in model.
+- Voice command parsing is separated into intent parsing to keep the assistant command surface testable and easier to extend.
 - ARIA supports both `google-genai` and the legacy `google-generativeai` package during the Gemini transition.
 - Interaction state and workflow controllers are separated from the OpenCV loop to improve testability and maintainability.
 - `scripts/run_checks.py` provides a single CI-friendly command for syntax and unit test verification.

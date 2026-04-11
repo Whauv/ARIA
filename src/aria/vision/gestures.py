@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 from typing import Optional
 
-from config import (
+from ..config import (
     INDEX_PIP,
     INDEX_TIP,
     MIDDLE_PIP,
