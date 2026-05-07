@@ -20,6 +20,21 @@ from aria.runtime.state import RuntimeState
 
 
 class UIInteractionControllerTests(unittest.TestCase):
+    def test_hover_candidate_is_blocked_while_drawing_stroke_is_active(self) -> None:
+        controller = UIInteractionController()
+        toolbar_items = [{"id": "toolbar:draw_mode", "action": "draw_mode", "label": "Draw Mode", "rect": (0, 0, 100, 40)}]
+
+        candidate = controller.resolve_hover_candidate(
+            hover_point=(20, 20),
+            pinch_active=False,
+            interaction_mode="draw_mode",
+            stroke_active=True,
+            toolbar_items=toolbar_items,
+            palette_items=[],
+        )
+
+        self.assertIsNone(candidate)
+
     def test_hover_then_dwell_triggers_action(self) -> None:
         state = RuntimeState()
         controller = UIInteractionController()
@@ -135,6 +150,88 @@ class DrawingInteractionControllerTests(unittest.TestCase):
         canvas.add_segment.assert_called_once_with((30, 40), (30, 40))
         self.assertEqual(state.prev_draw_point, (30, 40))
         self.assertEqual(state.status_text, config.STATUS_DRAWING)
+
+    def test_draw_mode_grace_period_keeps_stroke_alive_for_one_noisy_frame(self) -> None:
+        state = RuntimeState()
+        state.hover_target_id = None
+        state.last_draw_pose_time = 1.0
+        state.prev_draw_point = (30, 40)
+        canvas = Mock()
+        controller = DrawingInteractionController()
+
+        with patch("aria.runtime.controllers.is_closed_fist", return_value=False), patch(
+            "aria.runtime.controllers.is_draw_pose", return_value=False
+        ), patch("aria.runtime.controllers.is_index_and_middle_up", return_value=False):
+            controller.handle_draw_mode(
+                state=state,
+                hand_landmarks=object(),
+                current_point=(34, 44),
+                raw_fingertip=(34, 44),
+                pinch_active=False,
+                drawing_canvas=canvas,
+                sprites=[],
+                now=1.1,
+                ui_rects=[],
+            )
+
+        canvas.add_segment.assert_called_once_with((30, 40), (34, 44))
+        self.assertEqual(state.prev_draw_point, (34, 44))
+        self.assertEqual(state.status_text, config.STATUS_DRAWING)
+
+    def test_draw_mode_ignores_tiny_motion_jitter(self) -> None:
+        state = RuntimeState()
+        state.hover_target_id = None
+        state.prev_draw_point = (30, 40)
+        canvas = Mock()
+        controller = DrawingInteractionController()
+
+        with patch("aria.runtime.controllers.is_closed_fist", return_value=False), patch(
+            "aria.runtime.controllers.is_draw_pose", return_value=True
+        ), patch("aria.runtime.controllers.is_index_and_middle_up", return_value=False):
+            controller.handle_draw_mode(
+                state=state,
+                hand_landmarks=object(),
+                current_point=(32, 42),
+                raw_fingertip=(32, 42),
+                pinch_active=False,
+                drawing_canvas=canvas,
+                sprites=[],
+                now=1.0,
+                ui_rects=[],
+            )
+
+        canvas.add_path.assert_not_called()
+        canvas.add_segment.assert_not_called()
+        self.assertEqual(state.prev_draw_point, (30, 40))
+
+    def test_draw_mode_interpolates_large_motion_into_path(self) -> None:
+        state = RuntimeState()
+        state.hover_target_id = None
+        state.prev_draw_point = (10, 10)
+        canvas = Mock()
+        controller = DrawingInteractionController()
+
+        with patch("aria.runtime.controllers.is_closed_fist", return_value=False), patch(
+            "aria.runtime.controllers.is_draw_pose", return_value=True
+        ), patch("aria.runtime.controllers.is_index_and_middle_up", return_value=False):
+            controller.handle_draw_mode(
+                state=state,
+                hand_landmarks=object(),
+                current_point=(40, 10),
+                raw_fingertip=(40, 10),
+                pinch_active=False,
+                drawing_canvas=canvas,
+                sprites=[],
+                now=1.0,
+                ui_rects=[],
+            )
+
+        canvas.add_path.assert_called_once()
+        drawn_path = canvas.add_path.call_args.args[0]
+        self.assertEqual(drawn_path[0], (10, 10))
+        self.assertEqual(drawn_path[-1], (40, 10))
+        self.assertGreater(len(drawn_path), 2)
+        self.assertEqual(state.prev_draw_point, (40, 10))
 
 
 class RuntimeUtilityTests(unittest.TestCase):

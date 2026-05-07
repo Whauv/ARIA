@@ -4,6 +4,9 @@ import math
 from typing import Optional
 
 from ..config import (
+    DRAW_INDEX_MIN_OPENNESS,
+    DRAW_NON_INDEX_ALLOWED_OPEN_FINGERS,
+    DRAW_NON_INDEX_MAX_OPENNESS,
     INDEX_PIP,
     INDEX_TIP,
     MIDDLE_PIP,
@@ -16,18 +19,44 @@ from ..config import (
 )
 
 
-def _is_finger_up(hand_landmarks, tip_idx: int, pip_idx: int) -> bool:
+def finger_openness(hand_landmarks, tip_idx: int, pip_idx: int) -> float:
     tip = hand_landmarks.landmark[tip_idx]
     pip = hand_landmarks.landmark[pip_idx]
-    return tip.y < pip.y
+    return pip.y - tip.y
+
+
+def _is_finger_up(hand_landmarks, tip_idx: int, pip_idx: int) -> bool:
+    return finger_openness(hand_landmarks, tip_idx, pip_idx) > 0.0
+
+
+def is_draw_pose(
+    hand_landmarks,
+    index_min_openness: float = DRAW_INDEX_MIN_OPENNESS,
+    non_index_max_openness: float = DRAW_NON_INDEX_MAX_OPENNESS,
+    allowed_open_fingers: int = DRAW_NON_INDEX_ALLOWED_OPEN_FINGERS,
+) -> bool:
+    index_openness = finger_openness(hand_landmarks, INDEX_TIP, INDEX_PIP)
+    if index_openness < index_min_openness:
+        return False
+
+    non_index_open_fingers = 0
+    for tip_idx, pip_idx in (
+        (MIDDLE_TIP, MIDDLE_PIP),
+        (RING_TIP, RING_PIP),
+        (PINKY_TIP, PINKY_PIP),
+    ):
+        if finger_openness(hand_landmarks, tip_idx, pip_idx) > non_index_max_openness:
+            non_index_open_fingers += 1
+
+    return non_index_open_fingers <= allowed_open_fingers
 
 
 def is_index_only_up(hand_landmarks) -> bool:
-    return (
-        _is_finger_up(hand_landmarks, INDEX_TIP, INDEX_PIP)
-        and not _is_finger_up(hand_landmarks, MIDDLE_TIP, MIDDLE_PIP)
-        and not _is_finger_up(hand_landmarks, RING_TIP, RING_PIP)
-        and not _is_finger_up(hand_landmarks, PINKY_TIP, PINKY_PIP)
+    return is_draw_pose(
+        hand_landmarks,
+        index_min_openness=0.0,
+        non_index_max_openness=0.0,
+        allowed_open_fingers=0,
     )
 
 
@@ -65,6 +94,14 @@ def get_index_fingertip(hand_landmarks, frame_width: int, frame_height: int) -> 
 
 def get_fingertip_distance(point_a: tuple[int, int], point_b: tuple[int, int]) -> float:
     return math.hypot(point_a[0] - point_b[0], point_a[1] - point_b[1])
+
+
+def estimate_hand_spread(hand_landmarks) -> float:
+    xs = [landmark.x for landmark in hand_landmarks.landmark]
+    ys = [landmark.y for landmark in hand_landmarks.landmark]
+    width = max(xs) - min(xs)
+    height = max(ys) - min(ys)
+    return math.hypot(width, height)
 
 
 def is_pinching(hand_landmarks, frame_width: int, frame_height: int, threshold: float) -> bool:

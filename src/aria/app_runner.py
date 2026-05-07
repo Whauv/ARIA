@@ -15,20 +15,22 @@ from .ai.ai_utils import gemini_enabled
 from .assistant.jarvis import JarvisAssistant, JarvisContext
 from .config import (
     ALPHA,
+    BASE_HAND_SPREAD,
+    CALIBRATION_SECONDS,
     LINE_THICKNESS,
     MODE_BG_COLOR,
     PINCH_RELEASE_DISTANCE,
     PINCH_START_DISTANCE,
-    SMOOTHING_NEW_WEIGHT,
-    SMOOTHING_PREV_WEIGHT,
     STATUS_BG_COLOR,
     STATUS_COLOR,
     STATUS_IDLE,
     STATUS_SPRITE_CREATED,
     TARGET_FPS,
     THUMB_TIP,
+    TRACKING_STABLE_THRESHOLD,
+    TRACKING_UNSTABLE_THRESHOLD,
 )
-from .drawing.canvas import DrawingCanvas, smooth_point
+from .drawing.canvas import DrawingCanvas, adaptive_smooth_point
 from .drawing.sprite import draw_sprite_selection, overlay_sprite
 from .runtime.controllers import (
     DrawingInteractionController,
@@ -39,7 +41,6 @@ from .runtime.controllers import (
     clear_sprite_selection,
     enhance_low_light,
     get_selected_sprite,
-    point_in_any_rect,
     resize_for_mediapipe,
 )
 from .runtime.services import (
@@ -57,8 +58,10 @@ from .ui.ui import (
     ThumbnailItem,
     ToolbarItem,
     draw_brush_preview,
+    draw_fingertip_marker,
     draw_fps,
     draw_palette,
+    draw_tracking_feedback,
     draw_thumbnail_strip,
     draw_toolbar,
     draw_warning_overlay,
@@ -72,6 +75,7 @@ from .vision.gestures import (
     get_index_fingertip,
     get_landmark_point,
     is_pinching,
+    estimate_hand_spread,
     is_two_hand_resize,
 )
 
@@ -321,6 +325,52 @@ class AppRunner:
             self.diagnostics.record_hand_tracking_failure(f"Hand tracker initialization failed: {exc}")
             raise
 
+    def _update_calibration(self, hand_landmarks, now: float) -> None:
+        if self.state.calibrated:
+            return
+
+        self.state.begin_calibration(now)
+        if hand_landmarks is not None:
+            self.state.add_calibration_sample(estimate_hand_spread(hand_landmarks))
+
+        if self.state.calibration_started_at is None or now - self.state.calibration_started_at < CALIBRATION_SECONDS:
+            self.state.tracking_status_text = "Calibrating hand..."
+            return
+
+        average_spread = (
+            self.state.calibration_sample_total / self.state.calibration_sample_count
+            if self.state.calibration_sample_count
+            else BASE_HAND_SPREAD
+        )
+        hand_scale_factor = average_spread / BASE_HAND_SPREAD if BASE_HAND_SPREAD > 0 else 1.0
+        self.state.finish_calibration(max(0.75, min(1.75, hand_scale_factor)))
+        self.state.set_status("Calibration complete", now, 0.8)
+        self.state.tracking_status_text = "DRAW READY"
+
+    def _update_tracking_stability(self, raw_fingertip: tuple[int, int] | None) -> None:
+        if raw_fingertip is None:
+            self.state.set_tracking_stability(0.0)
+            self.state.tracking_status_text = "Waiting for hand"
+            return
+
+        if self.state.prev_smoothed_point is None:
+            self.state.set_tracking_stability(0.75)
+            self.state.tracking_status_text = "DRAW READY" if self.state.calibrated else "Calibrating hand..."
+            return
+
+        movement = math.hypot(
+            raw_fingertip[0] - self.state.prev_smoothed_point[0],
+            raw_fingertip[1] - self.state.prev_smoothed_point[1],
+        )
+        stability = max(0.0, min(1.0, 1.0 - (movement / 30.0)))
+        self.state.set_tracking_stability(stability)
+        if stability >= TRACKING_STABLE_THRESHOLD:
+            self.state.tracking_status_text = "DRAW READY"
+        elif stability <= TRACKING_UNSTABLE_THRESHOLD:
+            self.state.tracking_status_text = "TRACKING UNSTABLE"
+        else:
+            self.state.tracking_status_text = "Hold steady"
+
     def _prepare_ui_state(self, frame, frame_width: int, frame_height: int) -> FrameUiState:
         palette_items = get_palette_items(frame_width)
         toolbar_items = get_toolbar_items(frame_width, frame_height)
@@ -390,7 +440,10 @@ class AppRunner:
             self.drawing_canvas.reset_stroke()
         self.state.clear_smoothing()
         self.state.clear_drawing_path()
+        self.state.clear_draw_pose()
         self.state.clear_fist_hold()
+        self.state.set_tracking_stability(0.0)
+        self.state.tracking_status_text = "Waiting for hand"
         with self.sprites_lock:
             for sprite in self.sprites:
                 sprite.dragging = False
@@ -407,17 +460,26 @@ class AppRunner:
         self.state.clear_resize()
         current_point = None
         raw_fingertip = get_index_fingertip(hand_landmarks, frame_width, frame_height)
+        self._update_tracking_stability(raw_fingertip)
         if raw_fingertip is not None:
-            smoothed = smooth_point(
+            previous_raw = None
+            if self.state.prev_smoothed_point is not None:
+                previous_raw = (
+                    int(round(self.state.prev_smoothed_point[0])),
+                    int(round(self.state.prev_smoothed_point[1])),
+                )
+            movement_distance = get_fingertip_distance(previous_raw, raw_fingertip) if previous_raw is not None else 0.0
+            smoothed = adaptive_smooth_point(
                 self.state.prev_smoothed_point,
                 raw_fingertip,
-                SMOOTHING_PREV_WEIGHT,
-                SMOOTHING_NEW_WEIGHT,
+                movement_distance,
             )
             current_point = (int(smoothed[0]), int(smoothed[1]))
             self.state.prev_smoothed_point = smoothed
 
-        is_currently_pinching = is_pinching(hand_landmarks, frame_width, frame_height, PINCH_START_DISTANCE)
+        scaled_pinch_start = PINCH_START_DISTANCE * self.state.hand_scale_factor
+        scaled_pinch_release = PINCH_RELEASE_DISTANCE * self.state.hand_scale_factor
+        is_currently_pinching = is_pinching(hand_landmarks, frame_width, frame_height, scaled_pinch_start)
         pinch_distance = None
         if raw_fingertip is not None:
             thumb_tip = get_landmark_point(hand_landmarks, THUMB_TIP, frame_width, frame_height)
@@ -425,12 +487,12 @@ class AppRunner:
 
         with self.sprites_lock:
             dragging_sprite = next((sprite for sprite in self.sprites if sprite.dragging), None)
-        if dragging_sprite and pinch_distance is not None and pinch_distance > PINCH_RELEASE_DISTANCE:
+        if dragging_sprite and pinch_distance is not None and pinch_distance > scaled_pinch_release:
             with self.sprites_lock:
                 dragging_sprite.dragging = False
 
         pinch_active = is_currently_pinching or (
-            dragging_sprite is not None and pinch_distance is not None and pinch_distance <= PINCH_RELEASE_DISTANCE
+            dragging_sprite is not None and pinch_distance is not None and pinch_distance <= scaled_pinch_release
         )
         pinch_started = pinch_active and not self.state.previous_pinch_active
 
@@ -438,6 +500,8 @@ class AppRunner:
         hover_candidate = self.ui_controller.resolve_hover_candidate(
             hover_point,
             pinch_active,
+            self.state.interaction_mode,
+            self.state.stroke_active(),
             ui_state.toolbar_items,
             ui_state.palette_items,
         )
@@ -494,7 +558,13 @@ class AppRunner:
             output_frame = self.drawing_canvas.overlay_on(frame, ALPHA)
 
         dwell_ratio = (
-            dwell_progress(self.state.hover_start_time, config.DWELL_SECONDS, time.time()) if self.state.hover_target_id else 0.0
+            dwell_progress(
+                self.state.hover_start_time,
+                config.UI_DRAW_MODE_DWELL_SECONDS if self.state.interaction_mode == "draw_mode" else config.DWELL_SECONDS,
+                time.time(),
+            )
+            if self.state.hover_target_id
+            else 0.0
         )
         draw_palette(output_frame, palette_items, self.state.brush_name, self.state.hover_target_id, dwell_ratio)
         draw_toolbar(output_frame, toolbar_items, self.state.interaction_mode, self.state.hover_target_id, dwell_ratio)
@@ -512,6 +582,13 @@ class AppRunner:
         if self.state.interaction_mode == "draw_mode":
             brush_color = config.get_brush_color(self.state.brush_name) or config.DRAW_COLOR
             draw_brush_preview(output_frame, current_point, LINE_THICKNESS, brush_color)
+            draw_fingertip_marker(output_frame, current_point, self.state.tracking_stability)
+            draw_tracking_feedback(
+                output_frame,
+                self.state.calibrated,
+                self.state.tracking_stability,
+                self.state.tracking_status_text,
+            )
         draw_fps(output_frame, self.state.fps)
         return output_frame
 
@@ -534,10 +611,17 @@ class AppRunner:
         results = self._process_hand_tracking(frame)
         all_hands = results.multi_hand_landmarks if results and results.multi_hand_landmarks else []
         hand_landmarks = all_hands[0] if all_hands else None
+        self._update_calibration(hand_landmarks, time.time())
         ui_state = self._prepare_ui_state(frame, frame_width, frame_height)
 
         is_resize_mode = self.state.interaction_mode == "select_mode" and is_two_hand_resize(all_hands)
-        if is_resize_mode:
+        if not self.state.calibrated:
+            if hand_landmarks is None:
+                self._handle_no_hands_detected()
+            else:
+                self.state.status_text = "Calibrating"
+                self._update_tracking_stability(get_index_fingertip(hand_landmarks, frame_width, frame_height))
+        elif is_resize_mode:
             self._handle_resize_mode(
                 all_hands=all_hands,
                 frame_width=frame_width,

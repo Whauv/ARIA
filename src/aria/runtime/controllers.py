@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Callable
+import math
 
 import cv2
 import numpy as np
@@ -11,19 +12,22 @@ from ..config import (
     DOUBLE_PINCH_SECONDS,
     DRAG_SMOOTHING_NEW_WEIGHT,
     DRAG_SMOOTHING_PREV_WEIGHT,
+    DRAW_POSE_GRACE_SECONDS,
     DWELL_SECONDS,
     FINISH_HOLD_SECONDS,
+    MAX_SEGMENT_STEP_PX,
     MAX_MEDIAPIPE_HEIGHT,
     MAX_MEDIAPIPE_WIDTH,
+    MIN_DRAW_MOVEMENT_PX,
     STATUS_DRAWING,
     STATUS_IDLE,
     STATUS_PAUSED,
     STATUS_SPRITE_CREATED,
 )
-from ..drawing.canvas import DrawingCanvas
+from ..drawing.canvas import DrawingCanvas, interpolate_segment
 from ..drawing.sprite import create_sprite_from_canvas
-from ..ui.ui import PaletteItem, ThumbnailItem, ToolbarItem
-from ..vision.gestures import is_closed_fist, is_double_pinch, is_index_and_middle_up, is_index_only_up, point_in_rect
+from ..ui.ui import PaletteItem, ThumbnailItem, ToolbarItem, get_hover_padding
+from ..vision.gestures import is_closed_fist, is_double_pinch, is_draw_pose, is_index_and_middle_up, point_in_rect
 from .state import RuntimeState
 
 
@@ -129,18 +133,20 @@ class UIInteractionController:
         self,
         hover_point: tuple[int, int] | None,
         pinch_active: bool,
+        interaction_mode: str,
+        stroke_active: bool,
         toolbar_items: list[ToolbarItem],
         palette_items: list[PaletteItem],
     ) -> str | None:
-        if hover_point is None or pinch_active:
+        if hover_point is None or pinch_active or (interaction_mode == "draw_mode" and stroke_active):
             return None
 
         for item in toolbar_items:
-            if point_in_rect(hover_point, expand_rect(item["rect"], 34)):
+            if point_in_rect(hover_point, expand_rect(item["rect"], get_hover_padding(interaction_mode, "toolbar"))):
                 return item["id"]
 
         for item in palette_items:
-            if point_in_rect(hover_point, expand_rect(item["rect"], 20)):
+            if point_in_rect(hover_point, expand_rect(item["rect"], get_hover_padding(interaction_mode, "palette"))):
                 return item["id"]
 
         return None
@@ -151,7 +157,8 @@ class UIInteractionController:
             state.hover_start_time = now if hover_candidate else None
             return None
 
-        if hover_candidate and state.hover_start_time and now - state.hover_start_time >= DWELL_SECONDS:
+        required_dwell = config.UI_DRAW_MODE_DWELL_SECONDS if state.interaction_mode == "draw_mode" else DWELL_SECONDS
+        if hover_candidate and state.hover_start_time and now - state.hover_start_time >= required_dwell:
             state.clear_hover()
             return hover_candidate
         return None
@@ -268,7 +275,12 @@ class DrawingInteractionController:
         now: float,
         ui_rects: list[tuple[int, int, int, int]],
     ) -> None:
-        drawing_blocked_by_ui = state.hover_target_id is not None or point_in_any_rect(raw_fingertip or current_point, ui_rects)
+        scaled_min_draw_movement_px = MIN_DRAW_MOVEMENT_PX * state.hand_scale_factor
+        scaled_max_segment_step_px = MAX_SEGMENT_STEP_PX * state.hand_scale_factor
+        stroke_active = state.stroke_active()
+        pointer_over_ui = point_in_any_rect(raw_fingertip or current_point, ui_rects)
+        actively_triggering_ui = state.hover_target_id is not None
+        drawing_blocked_by_ui = (not stroke_active) and (actively_triggering_ui or pointer_over_ui)
 
         if is_closed_fist(hand_landmarks):
             if state.fist_start_time is None:
@@ -284,24 +296,51 @@ class DrawingInteractionController:
                     drawing_canvas.clear()
                     state.clear_smoothing()
                     state.clear_drawing_path()
-                    state.set_status(STATUS_SPRITE_CREATED, now, 0.8)
+                state.clear_draw_pose()
+                state.set_status(STATUS_SPRITE_CREATED, now, 0.8)
                 state.clear_fist_hold()
         else:
             state.clear_fist_hold()
 
-        if is_index_only_up(hand_landmarks) and current_point is not None and not pinch_active and not drawing_blocked_by_ui:
+        draw_pose_active = is_draw_pose(hand_landmarks)
+        if draw_pose_active:
+            state.last_draw_pose_time = now
+
+        draw_pose_with_grace = (
+            draw_pose_active
+            or (
+                state.last_draw_pose_time is not None
+                and now - state.last_draw_pose_time <= DRAW_POSE_GRACE_SECONDS
+            )
+        )
+
+        if draw_pose_with_grace and current_point is not None and not pinch_active and not drawing_blocked_by_ui:
             state.status_text = STATUS_DRAWING
             if state.prev_draw_point is not None:
-                drawing_canvas.add_segment(state.prev_draw_point, current_point)
+                movement_px = math.hypot(
+                    current_point[0] - state.prev_draw_point[0],
+                    current_point[1] - state.prev_draw_point[1],
+                )
+                if movement_px >= scaled_min_draw_movement_px:
+                    drawing_canvas.add_path(
+                        interpolate_segment(
+                            state.prev_draw_point,
+                            current_point,
+                            max(1, int(round(scaled_max_segment_step_px))),
+                        )
+                    )
+                    state.prev_draw_point = current_point
             else:
                 state.prev_smoothed_point = (float(current_point[0]), float(current_point[1]))
                 drawing_canvas.add_segment(current_point, current_point)
-            state.prev_draw_point = current_point
+                state.prev_draw_point = current_point
         elif is_index_and_middle_up(hand_landmarks):
             drawing_canvas.reset_stroke()
             state.clear_drawing_path()
+            state.clear_draw_pose()
             state.status_text = STATUS_PAUSED
         elif state.status_text != STATUS_SPRITE_CREATED:
             drawing_canvas.reset_stroke()
             state.clear_drawing_path()
+            state.clear_draw_pose()
             state.status_text = STATUS_IDLE

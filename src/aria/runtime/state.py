@@ -19,6 +19,7 @@ class RuntimeState:
     hover_start_time: Optional[float] = None
     last_pinch_time: Optional[float] = None
     last_pinched_sprite_ref: Optional[int] = None
+    last_draw_pose_time: Optional[float] = None
     previous_pinch_active: bool = False
     status_text: str = STATUS_IDLE
     status_expires_at: Optional[float] = None
@@ -27,6 +28,13 @@ class RuntimeState:
     fps: float = 0.0
     ai_warning_text: Optional[str] = None
     latest_frame: Optional[np.ndarray] = None
+    hand_scale_factor: float = 1.0
+    calibrated: bool = False
+    calibration_started_at: Optional[float] = None
+    calibration_sample_count: int = 0
+    calibration_sample_total: float = 0.0
+    tracking_stability: float = 0.0
+    tracking_status_text: str = "Waiting for hand"
 
     def set_status(self, text: str, now: float | None = None, duration: float | None = None) -> None:
         self.status_text = text
@@ -40,6 +48,9 @@ class RuntimeState:
     def clear_drawing_path(self) -> None:
         self.prev_draw_point = None
 
+    def clear_draw_pose(self) -> None:
+        self.last_draw_pose_time = None
+
     def clear_smoothing(self) -> None:
         self.prev_smoothed_point = None
 
@@ -52,8 +63,27 @@ class RuntimeState:
     def reset_interaction_transients(self) -> None:
         self.clear_hover()
         self.clear_drawing_path()
+        self.clear_draw_pose()
         self.clear_fist_hold()
         self.previous_pinch_active = False
+
+    def stroke_active(self) -> bool:
+        return self.prev_draw_point is not None
+
+    def begin_calibration(self, now: float) -> None:
+        if self.calibration_started_at is None:
+            self.calibration_started_at = now
+
+    def add_calibration_sample(self, sample: float) -> None:
+        self.calibration_sample_total += sample
+        self.calibration_sample_count += 1
+
+    def finish_calibration(self, hand_scale_factor: float) -> None:
+        self.hand_scale_factor = hand_scale_factor
+        self.calibrated = True
+
+    def set_tracking_stability(self, value: float) -> None:
+        self.tracking_stability = max(0.0, min(1.0, value))
 
     def expire_status(self, now: float) -> None:
         if self.status_expires_at and now >= self.status_expires_at:

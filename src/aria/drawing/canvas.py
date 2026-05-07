@@ -1,12 +1,22 @@
 from __future__ import annotations
 
+import math
 from typing import Optional
 
 import cv2
 import numpy as np
 
 from .. import config
-from ..config import LINE_THICKNESS, MAX_UNDO_SNAPSHOTS
+from ..config import (
+    LINE_THICKNESS,
+    MAX_UNDO_SNAPSHOTS,
+    SMOOTHING_FAST_DISTANCE_PX,
+    SMOOTHING_FAST_NEW_WEIGHT,
+    SMOOTHING_FAST_PREV_WEIGHT,
+    SMOOTHING_SLOW_DISTANCE_PX,
+    SMOOTHING_SLOW_NEW_WEIGHT,
+    SMOOTHING_SLOW_PREV_WEIGHT,
+)
 
 
 class DrawingCanvas:
@@ -57,6 +67,19 @@ class DrawingCanvas:
             self._current_stroke.append(start)
         self._current_stroke.append(end)
         cv2.line(self.canvas, start, end, self.brush_color, LINE_THICKNESS)
+        radius = max(1, LINE_THICKNESS // 2)
+        cv2.circle(self.canvas, start, radius, self.brush_color, -1)
+        cv2.circle(self.canvas, end, radius, self.brush_color, -1)
+
+    def add_path(self, points: list[tuple[int, int]]) -> None:
+        if not points:
+            return
+        if len(points) == 1:
+            self.add_segment(points[0], points[0])
+            return
+
+        for start, end in zip(points, points[1:]):
+            self.add_segment(start, end)
 
     def clear(self) -> None:
         self.canvas[:] = 0
@@ -98,3 +121,55 @@ def smooth_point(
     x = prev_weight * prev_point[0] + new_weight * new_point[0]
     y = prev_weight * prev_point[1] + new_weight * new_point[1]
     return x, y
+
+
+def interpolate_segment(
+    start: tuple[int, int],
+    end: tuple[int, int],
+    max_step_px: int,
+) -> list[tuple[int, int]]:
+    if max_step_px <= 0:
+        return [start, end]
+
+    distance = math.hypot(end[0] - start[0], end[1] - start[1])
+    if distance <= max_step_px:
+        return [start, end]
+
+    steps = max(1, int(math.ceil(distance / max_step_px)))
+    points = [start]
+    for step_index in range(1, steps):
+        ratio = step_index / steps
+        x = int(round(start[0] + (end[0] - start[0]) * ratio))
+        y = int(round(start[1] + (end[1] - start[1]) * ratio))
+        interpolated = (x, y)
+        if interpolated != points[-1]:
+            points.append(interpolated)
+    if end != points[-1]:
+        points.append(end)
+    return points
+
+
+def adaptive_smooth_point(
+    prev_point: Optional[tuple[float, float]],
+    new_point: tuple[int, int],
+    distance: float,
+    slow_distance_px: float = SMOOTHING_SLOW_DISTANCE_PX,
+    fast_distance_px: float = SMOOTHING_FAST_DISTANCE_PX,
+    slow_prev_weight: float = SMOOTHING_SLOW_PREV_WEIGHT,
+    slow_new_weight: float = SMOOTHING_SLOW_NEW_WEIGHT,
+    fast_prev_weight: float = SMOOTHING_FAST_PREV_WEIGHT,
+    fast_new_weight: float = SMOOTHING_FAST_NEW_WEIGHT,
+) -> tuple[float, float]:
+    if prev_point is None:
+        return float(new_point[0]), float(new_point[1])
+
+    if distance <= slow_distance_px:
+        prev_weight, new_weight = slow_prev_weight, slow_new_weight
+    elif distance >= fast_distance_px:
+        prev_weight, new_weight = fast_prev_weight, fast_new_weight
+    else:
+        ratio = (distance - slow_distance_px) / max(1e-6, fast_distance_px - slow_distance_px)
+        prev_weight = slow_prev_weight + (fast_prev_weight - slow_prev_weight) * ratio
+        new_weight = slow_new_weight + (fast_new_weight - slow_new_weight) * ratio
+
+    return smooth_point(prev_point, new_point, prev_weight, new_weight)
