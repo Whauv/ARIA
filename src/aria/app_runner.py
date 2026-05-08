@@ -41,6 +41,7 @@ from .runtime.controllers import (
     clear_sprite_selection,
     enhance_low_light,
     get_selected_sprite,
+    point_in_any_rect,
     resize_for_mediapipe,
 )
 from .runtime.services import (
