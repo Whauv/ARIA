@@ -14,6 +14,7 @@ class CommandIntent(str, Enum):
     SCALE_SELECTION = "scale_selection"
     UNDO = "undo"
     SAVE = "save"
+    SWITCH_MODE = "switch_mode"
     UNKNOWN = "unknown"
 
 
@@ -23,6 +24,7 @@ class ParsedCommand:
     raw_text: str
     color_name: str | None = None
     scale_factor: float | None = None
+    mode_name: str | None = None
 
 
 def parse_command(command: str) -> ParsedCommand:
@@ -59,5 +61,11 @@ def parse_command(command: str) -> ParsedCommand:
 
     if normalized == "save":
         return ParsedCommand(intent=CommandIntent.SAVE, raw_text=normalized)
+
+    if "select mode" in normalized:
+        return ParsedCommand(intent=CommandIntent.SWITCH_MODE, raw_text=normalized, mode_name="select_mode")
+
+    if "draw mode" in normalized or "drawing mode" in normalized:
+        return ParsedCommand(intent=CommandIntent.SWITCH_MODE, raw_text=normalized, mode_name="draw_mode")
 
     return ParsedCommand(intent=CommandIntent.UNKNOWN, raw_text=normalized)

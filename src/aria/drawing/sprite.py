@@ -25,7 +25,17 @@ class Sprite:
 
     def contains_point(self, point: tuple[int, int]) -> bool:
         px, py = point
-        return self.x <= px <= self.x + self.w and self.y <= py <= self.y + self.h
+        if not (self.x <= px <= self.x + self.w and self.y <= py <= self.y + self.h):
+            return False
+
+        local_x = px - self.x
+        local_y = py - self.y
+        if local_x < 0 or local_y < 0 or local_x >= self.w or local_y >= self.h:
+            return False
+
+        if self.img.shape[2] == 4:
+            return int(self.img[local_y, local_x, 3]) > 20
+        return True
 
     def clamp_to_frame(self, frame_width: int, frame_height: int) -> None:
         self.x = max(0, min(frame_width - self.w, self.x))

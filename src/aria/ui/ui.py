@@ -14,6 +14,7 @@ from ..config import (
     ERASER_COLOR,
     FPS_COLOR,
     PALETTE_ORDER,
+    TEST_PALETTE_ORDER,
     PANEL_BG_COLOR,
     THUMBNAIL_BORDER_COLOR,
     THUMBNAIL_WIDTH,
@@ -68,13 +69,13 @@ def _draw_panel(frame: np.ndarray, rect: tuple[int, int, int, int], color: tuple
 
 def get_palette_items(frame_width: int) -> list[PaletteItem]:
     items: list[PaletteItem] = []
-    button_width = 90
-    button_height = 26
-    spacing = 6
-    rail_padding = 12
-    x = rail_padding + 6
-    y = 104
-    for color_name in PALETTE_ORDER:
+    button_width = 112
+    button_height = 30
+    spacing = 8
+    x = 14
+    y = 68
+    palette_order = TEST_PALETTE_ORDER if TEST_PALETTE_ORDER else PALETTE_ORDER
+    for color_name in palette_order:
         items.append(
             {
                 "id": f"palette:{color_name}",
@@ -94,24 +95,24 @@ def draw_palette(frame: np.ndarray, items: list[PaletteItem], active_color_name:
 
     first_left, first_top, _, _ = items[0]["rect"]
     _, _, last_right, last_bottom = items[-1]["rect"]
-    _draw_panel(frame, (first_left - 10, first_top - 10, last_right + 10, last_bottom + 10), PANEL_BG_COLOR, 0.32)
+    _draw_panel(frame, (first_left - 8, first_top - 8, last_right + 8, last_bottom + 8), PANEL_BG_COLOR, 0.4)
     for item in items:
         left, top, right, bottom = item["rect"]
         color_name = item["color_name"]
         fill_color = ERASER_COLOR if color_name == "eraser" else item["preview_color"]
-        background = BUTTON_ACTIVE_COLOR if color_name == active_color_name else (48, 48, 48)
+        background = BUTTON_ACTIVE_COLOR if color_name == active_color_name else (38, 42, 54)
         cv2.rectangle(frame, (left, top), (right, bottom), background, -1)
         swatch_left = left + 8
-        swatch_right = left + 28
+        swatch_right = left + 34
         swatch_top = top + 5
         swatch_bottom = bottom - 5
         cv2.rectangle(frame, (swatch_left, swatch_top), (swatch_right, swatch_bottom), fill_color, -1)
         cv2.putText(
             frame,
             item["label"],
-            (left + 38, top + 18),
+            (left + 42, top + 21),
             cv2.FONT_HERSHEY_SIMPLEX,
-            0.42,
+            0.48,
             BUTTON_TEXT_COLOR,
             1,
             cv2.LINE_AA,
@@ -154,13 +155,13 @@ def draw_toolbar(frame: np.ndarray, items: list[ToolbarItem], active_action: str
         return
 
     top = frame.shape[0] - TOOLBAR_HEIGHT
-    _draw_panel(frame, (12, top - 4, frame.shape[1] - 12, frame.shape[0] - 8), TOOLBAR_BG_COLOR, 0.34)
+    _draw_panel(frame, (12, top - 4, frame.shape[1] - 12, frame.shape[0] - 8), TOOLBAR_BG_COLOR, 0.46)
     for item in items:
         left, item_top, right, bottom = item["rect"]
-        background = BUTTON_ACTIVE_COLOR if item["action"] == active_action else (52, 52, 52)
+        background = BUTTON_ACTIVE_COLOR if item["action"] == active_action else (38, 42, 54)
         cv2.rectangle(frame, (left, item_top), (right, bottom), background, -1)
-        text_scale = 0.55 if (right - left) < 120 else 0.62
-        text_x = left + 10 if (right - left) < 120 else left + 14
+        text_scale = 0.52 if (right - left) < 120 else 0.58
+        text_x = left + 10 if (right - left) < 120 else left + 12
         cv2.putText(
             frame,
             item["label"],
