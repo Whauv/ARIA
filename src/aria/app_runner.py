@@ -201,6 +201,7 @@ class AppRunner:
         self.frame_lock = threading.Lock()
         self.drawing_canvas: DrawingCanvas | None = None
         self._hands: HandTracker | None = None
+        self._latest_ui_state: FrameUiState | None = None
 
         self.jarvis = assistant_factory(
             JarvisContext(
@@ -211,6 +212,7 @@ class AppRunner:
                 undo_last_stroke=self.undo_last_stroke,
                 save_snapshot=self.save_snapshot,
                 set_brush_color=self.set_brush_color,
+                set_interaction_mode=self.set_interaction_mode,
             )
         )
         self.ui_callbacks = UIActionCallbacks(
@@ -274,6 +276,17 @@ class AppRunner:
             self.drawing_canvas.set_brush_color(color)
         return True
 
+    def set_interaction_mode(self, mode_name: str) -> bool:
+        if mode_name not in {"draw_mode", "select_mode"}:
+            return False
+        self.state.interaction_mode = mode_name
+        self.state.reset_interaction_transients()
+        if self.drawing_canvas is not None:
+            with self.canvas_lock:
+                self.drawing_canvas.reset_stroke()
+        self.state.set_status("Draw Mode" if mode_name == "draw_mode" else "Select Mode", time.time(), 0.9)
+        return True
+
     def _show_webcam_error(self) -> None:
         error_frame = np.zeros((220, 720, 3), dtype=np.uint8)
         if hasattr(cv2, "putText") and hasattr(cv2, "FONT_HERSHEY_SIMPLEX"):
@@ -301,6 +314,27 @@ class AppRunner:
             cv2.resizeWindow(self.window_name, 1400, 900)
         if hasattr(cv2, "setWindowProperty"):
             cv2.setWindowProperty(self.window_name, cv2.WND_PROP_AUTOSIZE, cv2.WINDOW_NORMAL)
+        if hasattr(cv2, "setMouseCallback"):
+            cv2.setMouseCallback(self.window_name, self._handle_mouse_event)
+
+    def _handle_mouse_event(self, event, x: int, y: int, _flags, _param) -> None:
+        if event != getattr(cv2, "EVENT_LBUTTONDOWN", 1):
+            return
+
+        ui_state = self._latest_ui_state
+        if ui_state is None:
+            return
+
+        clicked = (x, y)
+        now = time.time()
+        for item in ui_state.toolbar_items:
+            if point_in_any_rect(clicked, [item["rect"]]):
+                self.ui_controller.apply_action(self.state, item["id"], self.ui_callbacks, now)
+                return
+        for item in ui_state.palette_items:
+            if point_in_any_rect(clicked, [item["rect"]]):
+                self.ui_controller.apply_action(self.state, item["id"], self.ui_callbacks, now)
+                return
 
     def _show_frame(self, frame: np.ndarray) -> None:
         if hasattr(cv2, "imshow"):
@@ -389,6 +423,26 @@ class AppRunner:
             sprite_snapshot=sprite_snapshot,
             selected_sprite=selected_sprite,
         )
+
+    def _draw_hand_tracking_overlay(self, frame: np.ndarray, hand_landmarks, frame_width: int, frame_height: int) -> None:
+        if hand_landmarks is None:
+            return
+        if not hasattr(cv2, "line") or not hasattr(cv2, "circle"):
+            return
+
+        points = [get_landmark_point(hand_landmarks, index, frame_width, frame_height) for index in range(21)]
+        connections = [
+            (0, 1), (1, 2), (2, 3), (3, 4),
+            (0, 5), (5, 6), (6, 7), (7, 8),
+            (5, 9), (9, 10), (10, 11), (11, 12),
+            (9, 13), (13, 14), (14, 15), (15, 16),
+            (13, 17), (17, 18), (18, 19), (19, 20),
+            (0, 17),
+        ]
+        for start, end in connections:
+            cv2.line(frame, points[start], points[end], (70, 180, 255), 1)
+        for point in points:
+            cv2.circle(frame, point, 2, (120, 255, 180), -1)
 
     def _process_hand_tracking(self, frame):
         assert self._hands is not None
@@ -624,6 +678,7 @@ class AppRunner:
         hand_landmarks = all_hands[0] if all_hands else None
         self._update_calibration(hand_landmarks, time.time())
         ui_state = self._prepare_ui_state(frame, frame_width, frame_height)
+        self._latest_ui_state = ui_state
 
         is_resize_mode = self.state.interaction_mode == "select_mode" and is_two_hand_resize(all_hands)
         if not self.state.calibrated:
@@ -653,6 +708,7 @@ class AppRunner:
             overlay_sprite(frame, sprite)
         for sprite in ui_state.sprite_snapshot:
             draw_sprite_selection(frame, sprite)
+        self._draw_hand_tracking_overlay(frame, hand_landmarks, frame_width, frame_height)
 
         elapsed = time.time() - loop_start
         if elapsed > 0:

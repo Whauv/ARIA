@@ -23,6 +23,7 @@ class RuntimeState:
     last_pinch_time: Optional[float] = None
     last_pinched_sprite_ref: Optional[int] = None
     last_draw_pose_time: Optional[float] = None
+    last_color_gesture_time: Optional[float] = None
     previous_pinch_active: bool = False
     status_text: str = STATUS_IDLE
     status_expires_at: Optional[float] = None

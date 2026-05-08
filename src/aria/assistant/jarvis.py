@@ -49,6 +49,7 @@ class JarvisContext:
     undo_last_stroke: Callable[[], bool]
     save_snapshot: Callable[[str], bool]
     set_brush_color: Callable[[str], bool]
+    set_interaction_mode: Callable[[str], bool]
 
 
 def command_handler(command: str, context: JarvisContext) -> str:
@@ -97,6 +98,13 @@ def command_handler(command: str, context: JarvisContext) -> str:
         if context.save_snapshot(config.DEFAULT_SAVE_PATH):
             return "Saved!"
         return "I could not save the snapshot."
+
+    if parsed_command.intent == CommandIntent.SWITCH_MODE and parsed_command.mode_name:
+        if context.set_interaction_mode(parsed_command.mode_name):
+            if parsed_command.mode_name == "select_mode":
+                return "Switched to select mode."
+            return "Switched to draw mode."
+        return "I could not switch mode right now."
 
     return "I heard the command, but I do not know how to handle it yet."
 

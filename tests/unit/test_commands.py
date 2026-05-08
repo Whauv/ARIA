@@ -34,6 +34,7 @@ class CommandHandlerTests(unittest.TestCase):
             undo_last_stroke=lambda: True,
             save_snapshot=lambda path: True,
             set_brush_color=lambda color_name: color_name == "red",
+            set_interaction_mode=lambda mode_name: mode_name in {"draw_mode", "select_mode"},
         )
 
     def test_command_handler_routes_palette_change(self) -> None:
@@ -55,6 +56,7 @@ class JarvisAssistantTests(unittest.TestCase):
             undo_last_stroke=lambda: False,
             save_snapshot=lambda path: False,
             set_brush_color=lambda color_name: False,
+            set_interaction_mode=lambda mode_name: False,
         )
 
     def test_capture_command_respects_cloud_speech_toggle(self) -> None:

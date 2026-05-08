@@ -9,6 +9,7 @@ import numpy as np
 
 from .. import config
 from ..config import (
+    COLOR_TOGGLE_GESTURE_SECONDS,
     DOUBLE_PINCH_SECONDS,
     DRAG_SMOOTHING_NEW_WEIGHT,
     DRAG_SMOOTHING_PREV_WEIGHT,
@@ -52,6 +53,10 @@ def get_topmost_sprite_near_point(sprites, point, padding: int = 18):
         return None
 
     px, py = point
+    for sprite in sorted(sprites, key=lambda item: item.z_index, reverse=True):
+        if sprite.contains_point((px, py)):
+            return sprite
+
     for sprite in sorted(sprites, key=lambda item: item.z_index, reverse=True):
         if (
             sprite.x - padding <= px <= sprite.x + sprite.w + padding
@@ -271,6 +276,29 @@ class SpriteInteractionController:
 
 
 class DrawingInteractionController:
+    def _toggle_test_palette_color(self, state: RuntimeState, drawing_canvas: DrawingCanvas, now: float) -> None:
+        if not config.TEST_PALETTE_ORDER:
+            return
+
+        if state.last_color_gesture_time is not None and now - state.last_color_gesture_time < COLOR_TOGGLE_GESTURE_SECONDS:
+            return
+
+        current = state.brush_name
+        if current not in config.TEST_PALETTE_ORDER:
+            next_color = config.TEST_PALETTE_ORDER[0]
+        else:
+            index = config.TEST_PALETTE_ORDER.index(current)
+            next_color = config.TEST_PALETTE_ORDER[(index + 1) % len(config.TEST_PALETTE_ORDER)]
+
+        next_color_value = config.get_brush_color(next_color)
+        if next_color_value is None:
+            return
+
+        drawing_canvas.set_brush_color(next_color_value)
+        state.brush_name = next_color
+        state.last_color_gesture_time = now
+        state.set_status(f"{next_color.title()} brush", now, 0.6)
+
     def handle_draw_mode(
         self,
         state: RuntimeState,
@@ -321,6 +349,10 @@ class DrawingInteractionController:
                 and now - state.last_draw_pose_time <= DRAW_POSE_GRACE_SECONDS
             )
         )
+
+        if pinch_active and not stroke_active and not drawing_blocked_by_ui:
+            self._toggle_test_palette_color(state, drawing_canvas, now)
+            return
 
         if draw_pose_with_grace and current_point is not None and not pinch_active and not drawing_blocked_by_ui:
             state.status_text = STATUS_DRAWING
