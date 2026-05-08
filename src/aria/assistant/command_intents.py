@@ -62,10 +62,25 @@ def parse_command(command: str) -> ParsedCommand:
     if normalized == "save":
         return ParsedCommand(intent=CommandIntent.SAVE, raw_text=normalized)
 
-    if "select mode" in normalized:
+    select_mode_phrases = {
+        "select mode",
+        "switch to select",
+        "go to select",
+        "select tool",
+        "selection mode",
+    }
+    draw_mode_phrases = {
+        "draw mode",
+        "drawing mode",
+        "switch to draw",
+        "go to draw",
+        "draw tool",
+    }
+
+    if any(phrase in normalized for phrase in select_mode_phrases):
         return ParsedCommand(intent=CommandIntent.SWITCH_MODE, raw_text=normalized, mode_name="select_mode")
 
-    if "draw mode" in normalized or "drawing mode" in normalized:
+    if any(phrase in normalized for phrase in draw_mode_phrases):
         return ParsedCommand(intent=CommandIntent.SWITCH_MODE, raw_text=normalized, mode_name="draw_mode")
 
     return ParsedCommand(intent=CommandIntent.UNKNOWN, raw_text=normalized)
