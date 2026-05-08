@@ -37,6 +37,7 @@ class UIInteractionControllerTests(unittest.TestCase):
 
     def test_hover_then_dwell_triggers_action(self) -> None:
         state = RuntimeState()
+        state.interaction_mode = "select_mode"
         controller = UIInteractionController()
 
         first = controller.consume_hover(state, "toolbar:draw_mode", 10.0)
@@ -133,7 +134,7 @@ class DrawingInteractionControllerTests(unittest.TestCase):
         controller = DrawingInteractionController()
 
         with patch("aria.runtime.controllers.is_closed_fist", return_value=False), patch(
-            "aria.runtime.controllers.is_index_only_up", return_value=True
+            "aria.runtime.controllers.is_draw_pose", return_value=True
         ), patch("aria.runtime.controllers.is_index_and_middle_up", return_value=False):
             controller.handle_draw_mode(
                 state=state,
@@ -174,7 +175,10 @@ class DrawingInteractionControllerTests(unittest.TestCase):
                 ui_rects=[],
             )
 
-        canvas.add_segment.assert_called_once_with((30, 40), (34, 44))
+        canvas.add_path.assert_called_once()
+        drawn_path = canvas.add_path.call_args.args[0]
+        self.assertEqual(drawn_path[0], (30, 40))
+        self.assertEqual(drawn_path[-1], (34, 44))
         self.assertEqual(state.prev_draw_point, (34, 44))
         self.assertEqual(state.status_text, config.STATUS_DRAWING)
 
