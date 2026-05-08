@@ -20,6 +20,8 @@ class Sprite:
     dragging: bool
     z_index: int
     selected: bool
+    drag_offset_x: int = -1
+    drag_offset_y: int = -1
 
     def contains_point(self, point: tuple[int, int]) -> bool:
         px, py = point
@@ -34,12 +36,16 @@ class Sprite:
             return
 
         new_w = max(MIN_SPRITE_SIZE, min(MAX_SPRITE_SIZE, int(self.w * scale_factor)))
+        self.resize_to_dimensions(new_w)
+
+    def resize_to_dimensions(self, target_width: int) -> None:
+        target_width = max(MIN_SPRITE_SIZE, min(MAX_SPRITE_SIZE, int(target_width)))
         original_h, original_w = self.original_img.shape[:2]
         aspect_ratio = original_h / original_w if original_w else 1.0
-        new_h = max(MIN_SPRITE_SIZE, min(MAX_SPRITE_SIZE, int(new_w * aspect_ratio)))
+        new_h = max(MIN_SPRITE_SIZE, min(MAX_SPRITE_SIZE, int(target_width * aspect_ratio)))
 
-        self.img = cv2.resize(self.original_img, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
-        self.w = new_w
+        self.img = cv2.resize(self.original_img, (target_width, new_h), interpolation=cv2.INTER_LINEAR)
+        self.w = target_width
         self.h = new_h
 
     def scale_by_factor(self, factor: float) -> None:

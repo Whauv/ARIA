@@ -19,6 +19,7 @@ from ..config import (
     MAX_MEDIAPIPE_HEIGHT,
     MAX_MEDIAPIPE_WIDTH,
     MIN_DRAW_MOVEMENT_PX,
+    SPRITE_HIT_PADDING,
     STATUS_DRAWING,
     STATUS_IDLE,
     STATUS_PAUSED,
@@ -35,6 +36,8 @@ def clear_sprite_selection(sprites) -> None:
     for sprite in sprites:
         sprite.selected = False
         sprite.dragging = False
+        sprite.drag_offset_x = -1
+        sprite.drag_offset_y = -1
 
 
 def get_selected_sprite(sprites):
@@ -222,7 +225,7 @@ class SpriteInteractionController:
 
         dragging_sprite = next((sprite for sprite in sprites if sprite.dragging), None)
         selected_sprite = get_selected_sprite(sprites)
-        hover_sprite = get_topmost_sprite_near_point(sprites, hit_point, padding=22)
+        hover_sprite = get_topmost_sprite_near_point(sprites, hit_point, padding=SPRITE_HIT_PADDING)
         pinch_target_sprite = thumbnail_target_sprite or dragging_sprite or hover_sprite or selected_sprite
 
         if pinch_started and pinch_target_sprite is not None:
@@ -241,6 +244,8 @@ class SpriteInteractionController:
             clear_sprite_selection(sprites)
             pinch_target_sprite.selected = True
             bring_sprite_to_front(sprites, pinch_target_sprite)
+            pinch_target_sprite.drag_offset_x = max(0, min(pinch_target_sprite.w, hit_point[0] - pinch_target_sprite.x))
+            pinch_target_sprite.drag_offset_y = max(0, min(pinch_target_sprite.h, hit_point[1] - pinch_target_sprite.y))
             state.last_pinch_time = now
             state.last_pinched_sprite_ref = id(pinch_target_sprite)
 
@@ -248,8 +253,11 @@ class SpriteInteractionController:
             clear_sprite_selection(sprites)
             pinch_target_sprite.selected = True
             pinch_target_sprite.dragging = True
-            target_x = current_point[0] - pinch_target_sprite.w // 2
-            target_y = current_point[1] - pinch_target_sprite.h // 2
+            if pinch_target_sprite.drag_offset_x < 0 or pinch_target_sprite.drag_offset_y < 0:
+                pinch_target_sprite.drag_offset_x = pinch_target_sprite.w // 2
+                pinch_target_sprite.drag_offset_y = pinch_target_sprite.h // 2
+            target_x = current_point[0] - pinch_target_sprite.drag_offset_x
+            target_y = current_point[1] - pinch_target_sprite.drag_offset_y
             pinch_target_sprite.x = int(
                 DRAG_SMOOTHING_PREV_WEIGHT * pinch_target_sprite.x + DRAG_SMOOTHING_NEW_WEIGHT * target_x
             )

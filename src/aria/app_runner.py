@@ -424,9 +424,19 @@ class AppRunner:
 
         if selected_sprite and first_point and second_point:
             current_distance = get_fingertip_distance(first_point, second_point)
-            if self.state.prev_resize_distance and self.state.prev_resize_distance > 0:
+            if (
+                self.state.resizing_sprite_ref != id(selected_sprite)
+                or self.state.resize_anchor_distance is None
+                or self.state.resize_anchor_width is None
+            ):
+                self.state.resizing_sprite_ref = id(selected_sprite)
+                self.state.resize_anchor_distance = max(1.0, current_distance)
+                self.state.resize_anchor_width = selected_sprite.w
+            if self.state.resize_anchor_distance and self.state.resize_anchor_width:
                 with self.sprites_lock:
-                    selected_sprite.resize_from_original(current_distance / self.state.prev_resize_distance)
+                    scale_factor = current_distance / self.state.resize_anchor_distance
+                    target_width = int(self.state.resize_anchor_width * scale_factor)
+                    selected_sprite.resize_to_dimensions(target_width)
                     selected_sprite.clamp_to_frame(frame_width, frame_height)
             self.state.prev_resize_distance = current_distance
         else:

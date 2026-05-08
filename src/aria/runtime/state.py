@@ -14,6 +14,9 @@ class RuntimeState:
     prev_smoothed_point: Optional[tuple[float, float]] = None
     prev_draw_point: Optional[tuple[int, int]] = None
     prev_resize_distance: Optional[float] = None
+    resize_anchor_distance: Optional[float] = None
+    resize_anchor_width: Optional[int] = None
+    resizing_sprite_ref: Optional[int] = None
     fist_start_time: Optional[float] = None
     hover_target_id: Optional[str] = None
     hover_start_time: Optional[float] = None
@@ -56,6 +59,9 @@ class RuntimeState:
 
     def clear_resize(self) -> None:
         self.prev_resize_distance = None
+        self.resize_anchor_distance = None
+        self.resize_anchor_width = None
+        self.resizing_sprite_ref = None
 
     def clear_fist_hold(self) -> None:
         self.fist_start_time = None
