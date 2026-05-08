@@ -20,6 +20,10 @@ from ..config import (
     TOOLBAR_ACTIONS,
     TOOLBAR_BG_COLOR,
     TOOLBAR_HEIGHT,
+    TRACKING_STABLE_THRESHOLD,
+    TRACKING_UNSTABLE_THRESHOLD,
+    UI_DRAW_MODE_PADDING,
+    UI_SELECT_MODE_PADDING,
     WARNING_BG_COLOR,
     WARNING_TEXT_COLOR,
 )
@@ -44,6 +48,15 @@ class ThumbnailItem(TypedDict):
     id: str
     rect: tuple[int, int, int, int]
     sprite: object
+
+
+def get_hover_padding(interaction_mode: str, target_kind: str) -> int:
+    base_padding = UI_DRAW_MODE_PADDING if interaction_mode == "draw_mode" else UI_SELECT_MODE_PADDING
+    if target_kind == "toolbar":
+        return base_padding + 8
+    if target_kind == "palette":
+        return base_padding
+    return base_padding
 
 
 def _draw_panel(frame: np.ndarray, rect: tuple[int, int, int, int], color: tuple[int, int, int], alpha: float) -> None:
@@ -200,6 +213,21 @@ def draw_brush_preview(frame: np.ndarray, fingertip: tuple[int, int] | None, bru
     cv2.circle(frame, center, radius, brush_color, 2)
 
 
+def draw_fingertip_marker(frame: np.ndarray, fingertip: tuple[int, int] | None, tracking_stability: float) -> None:
+    if fingertip is None:
+        return
+
+    if tracking_stability >= TRACKING_STABLE_THRESHOLD:
+        color = (80, 255, 120)
+    elif tracking_stability <= TRACKING_UNSTABLE_THRESHOLD:
+        color = (0, 140, 255)
+    else:
+        color = (0, 220, 255)
+
+    cv2.circle(frame, fingertip, 6, color, -1)
+    cv2.circle(frame, fingertip, 10, color, 1)
+
+
 def draw_fps(frame: np.ndarray, fps: float) -> None:
     cv2.putText(
         frame,
@@ -233,5 +261,31 @@ def draw_warning_overlay(frame: np.ndarray, warning_text: str | None) -> None:
         0.5,
         WARNING_TEXT_COLOR,
         1,
+        cv2.LINE_AA,
+    )
+
+
+def draw_tracking_feedback(frame: np.ndarray, calibrated: bool, tracking_stability: float, tracking_status_text: str) -> None:
+    if not calibrated:
+        text = "Calibrating hand..."
+        color = (255, 220, 140)
+    elif tracking_stability >= TRACKING_STABLE_THRESHOLD:
+        text = "DRAW READY"
+        color = (120, 255, 120)
+    elif tracking_stability <= TRACKING_UNSTABLE_THRESHOLD:
+        text = "TRACKING UNSTABLE"
+        color = (0, 140, 255)
+    else:
+        text = tracking_status_text
+        color = (0, 220, 255)
+
+    cv2.putText(
+        frame,
+        text,
+        (14, 108),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.6,
+        color,
+        2,
         cv2.LINE_AA,
     )
