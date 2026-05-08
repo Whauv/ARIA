@@ -14,6 +14,7 @@ from ..config import (
     ERASER_COLOR,
     FPS_COLOR,
     PALETTE_ORDER,
+    TEST_PALETTE_ORDER,
     PANEL_BG_COLOR,
     THUMBNAIL_BORDER_COLOR,
     THUMBNAIL_WIDTH,
@@ -73,7 +74,7 @@ def get_palette_items(frame_width: int) -> list[PaletteItem]:
     spacing = 8
     x = 14
     y = 68
-    palette_order = config.TEST_PALETTE_ORDER if hasattr(config, "TEST_PALETTE_ORDER") else PALETTE_ORDER
+    palette_order = TEST_PALETTE_ORDER if TEST_PALETTE_ORDER else PALETTE_ORDER
     for color_name in palette_order:
         items.append(
             {
