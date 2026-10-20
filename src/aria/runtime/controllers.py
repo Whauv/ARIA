@@ -10,6 +10,8 @@ import numpy as np
 from .. import config
 from ..config import (
     COLOR_TOGGLE_GESTURE_SECONDS,
+    DELETE_CONFIRM_SECONDS,
+    DRAG_CLUTCH_SECONDS,
     DOUBLE_PINCH_SECONDS,
     DRAG_SMOOTHING_NEW_WEIGHT,
     DRAG_SMOOTHING_PREV_WEIGHT,
@@ -181,8 +183,10 @@ class UIInteractionController:
 
         if action_id == "toolbar:draw_mode":
             state.interaction_mode = "draw_mode"
+            state.clear_resize_clutch()
         elif action_id == "toolbar:select_mode":
             state.interaction_mode = "select_mode"
+            state.clear_resize_clutch()
         elif action_id == "toolbar:clear":
             callbacks.clear_canvas()
             state.set_status("Cleared", now, 0.8)
@@ -211,12 +215,14 @@ class SpriteInteractionController:
         now: float,
     ) -> None:
         if current_point is None or hit_point is None:
+            state.hovered_sprite_ref = None
             return
 
+        if state.delete_pending_expires_at is not None and now > state.delete_pending_expires_at:
+            state.clear_delete_confirmation()
+
         hovered_sprite = get_topmost_sprite_near_point(sprites, hit_point, padding=22)
-        if hovered_sprite is not None and not pinch_active:
-            clear_sprite_selection(sprites)
-            hovered_sprite.selected = True
+        state.hovered_sprite_ref = id(hovered_sprite) if hovered_sprite is not None else None
 
         thumbnail_target_sprite = None
         if pinch_started:
@@ -229,32 +235,54 @@ class SpriteInteractionController:
                     break
 
         dragging_sprite = next((sprite for sprite in sprites if sprite.dragging), None)
-        selected_sprite = get_selected_sprite(sprites)
+        active_pinch_sprite = next(
+            (sprite for sprite in sprites if id(sprite) == state.pinch_target_sprite_ref),
+            None,
+        )
         hover_sprite = get_topmost_sprite_near_point(sprites, hit_point, padding=SPRITE_HIT_PADDING)
-        pinch_target_sprite = thumbnail_target_sprite or dragging_sprite or hover_sprite or selected_sprite
+        pinch_target_sprite = thumbnail_target_sprite or dragging_sprite or active_pinch_sprite or hover_sprite
 
         if pinch_started and pinch_target_sprite is not None:
-            if is_double_pinch(state.last_pinch_time, now, DOUBLE_PINCH_SECONDS) and state.last_pinched_sprite_ref == id(
-                pinch_target_sprite
-            ):
+            if state.delete_pending_sprite_ref == id(pinch_target_sprite):
                 remove_index = next((index for index, sprite in enumerate(sprites) if sprite is pinch_target_sprite), None)
                 if remove_index is not None:
                     sprites.pop(remove_index)
                     clear_sprite_selection(sprites)
-                state.last_pinch_time = None
-                state.last_pinched_sprite_ref = None
+                state.clear_delete_confirmation()
+                state.pinch_target_sprite_ref = None
+                state.pinch_started_at = None
                 state.set_status("Deleted sprite", now, 0.8)
                 return
 
+            if is_double_pinch(state.last_pinch_time, now, DOUBLE_PINCH_SECONDS) and state.last_pinched_sprite_ref == id(
+                pinch_target_sprite
+            ):
+                state.delete_pending_sprite_ref = id(pinch_target_sprite)
+                state.delete_pending_expires_at = now + DELETE_CONFIRM_SECONDS
+                state.pinch_target_sprite_ref = None
+                state.pinch_started_at = None
+                state.set_status("Pinch once more to delete", now, DELETE_CONFIRM_SECONDS)
+                return
+
             clear_sprite_selection(sprites)
+            state.clear_delete_confirmation()
             pinch_target_sprite.selected = True
             bring_sprite_to_front(sprites, pinch_target_sprite)
             pinch_target_sprite.drag_offset_x = max(0, min(pinch_target_sprite.w, hit_point[0] - pinch_target_sprite.x))
             pinch_target_sprite.drag_offset_y = max(0, min(pinch_target_sprite.h, hit_point[1] - pinch_target_sprite.y))
             state.last_pinch_time = now
             state.last_pinched_sprite_ref = id(pinch_target_sprite)
+            state.pinch_target_sprite_ref = id(pinch_target_sprite)
+            state.pinch_started_at = now
+            state.set_status("Selected - hold pinch to drag", now, DRAG_CLUTCH_SECONDS + 0.45)
 
         if pinch_active and pinch_target_sprite is not None:
+            if state.pinch_started_at is None:
+                state.pinch_started_at = now
+            if now - state.pinch_started_at < DRAG_CLUTCH_SECONDS:
+                state.set_status("Hold pinch to drag", now, 0.35)
+                return
+
             clear_sprite_selection(sprites)
             pinch_target_sprite.selected = True
             pinch_target_sprite.dragging = True
@@ -270,9 +298,12 @@ class SpriteInteractionController:
                 DRAG_SMOOTHING_PREV_WEIGHT * pinch_target_sprite.y + DRAG_SMOOTHING_NEW_WEIGHT * target_y
             )
             pinch_target_sprite.clamp_to_frame(frame_width, frame_height)
+            state.set_status("Dragging - release to place", now, 0.35)
         else:
             for sprite in sprites:
                 sprite.dragging = False
+            state.pinch_target_sprite_ref = None
+            state.pinch_started_at = None
 
 
 class DrawingInteractionController:
@@ -280,7 +311,15 @@ class DrawingInteractionController:
         if not config.TEST_PALETTE_ORDER:
             return
 
-        if state.last_color_gesture_time is not None and now - state.last_color_gesture_time < COLOR_TOGGLE_GESTURE_SECONDS:
+        if state.color_toggle_triggered:
+            return
+
+        if state.color_toggle_hold_started_at is None:
+            state.color_toggle_hold_started_at = now
+            state.set_status("Hold pinch to switch color", now, COLOR_TOGGLE_GESTURE_SECONDS)
+            return
+
+        if now - state.color_toggle_hold_started_at < COLOR_TOGGLE_GESTURE_SECONDS:
             return
 
         current = state.brush_name
@@ -297,6 +336,7 @@ class DrawingInteractionController:
         drawing_canvas.set_brush_color(next_color_value)
         state.brush_name = next_color
         state.last_color_gesture_time = now
+        state.color_toggle_triggered = True
         state.set_status(f"{next_color.title()} brush", now, 0.6)
 
     def handle_draw_mode(
@@ -321,6 +361,7 @@ class DrawingInteractionController:
         if is_closed_fist(hand_landmarks):
             if state.fist_start_time is None:
                 state.fist_start_time = now
+                state.set_status("Hold fist to create sprite", now, FINISH_HOLD_SECONDS)
             elif now - state.fist_start_time >= FINISH_HOLD_SECONDS:
                 drawing_canvas.reset_stroke()
                 next_z_index = max((sprite.z_index for sprite in sprites), default=-1) + 1
@@ -353,6 +394,8 @@ class DrawingInteractionController:
         if pinch_active and not stroke_active and not drawing_blocked_by_ui:
             self._toggle_test_palette_color(state, drawing_canvas, now)
             return
+        if not pinch_active:
+            state.clear_color_toggle()
 
         if draw_pose_with_grace and current_point is not None and not pinch_active and not drawing_blocked_by_ui:
             state.status_text = STATUS_DRAWING

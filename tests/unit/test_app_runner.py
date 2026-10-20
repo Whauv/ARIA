@@ -90,6 +90,24 @@ class AppRunnerTests(unittest.TestCase):
         self.assertEqual(self.runner.state.brush_name, "red")
         self.assertEqual(self.runner.drawing_canvas.brush_color, config.BRUSH_COLORS["red"])
 
+    @patch("aria.app_runner.is_pinching", return_value=True)
+    @patch("aria.app_runner.is_two_hand_resize", return_value=True)
+    def test_resize_requires_a_short_two_pinch_clutch(self, _is_two_hand_resize, _is_pinching) -> None:
+        hands = [object(), object()]
+        selected_sprite = object()
+
+        self.assertFalse(self.runner._resize_clutch_active(hands, selected_sprite, 640, 480, 1.0))
+        self.assertFalse(self.runner._resize_clutch_active(hands, selected_sprite, 640, 480, 1.1))
+        self.assertTrue(
+            self.runner._resize_clutch_active(
+                hands,
+                selected_sprite,
+                640,
+                480,
+                1.0 + config.RESIZE_CLUTCH_SECONDS + 0.05,
+            )
+        )
+
     @unittest.skipUnless(HAS_CV2_IMWRITE, "Full OpenCV bindings are not available in this Python environment")
     @patch("aria.app_runner.cv2.imwrite", return_value=True)
     def test_save_snapshot_uses_current_frame(self, mocked_imwrite) -> None:

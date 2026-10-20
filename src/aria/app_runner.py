@@ -21,6 +21,7 @@ from .config import (
     MODE_BG_COLOR,
     PINCH_RELEASE_DISTANCE,
     PINCH_START_DISTANCE,
+    RESIZE_CLUTCH_SECONDS,
     STATUS_BG_COLOR,
     STATUS_COLOR,
     STATUS_IDLE,
@@ -31,7 +32,12 @@ from .config import (
     TRACKING_UNSTABLE_THRESHOLD,
 )
 from .drawing.canvas import DrawingCanvas, adaptive_smooth_point
-from .drawing.sprite import draw_sprite_selection, overlay_sprite
+from .drawing.sprite import (
+    draw_sprite_candidate,
+    draw_sprite_delete_confirmation,
+    draw_sprite_selection,
+    overlay_sprite,
+)
 from .runtime.controllers import (
     DrawingInteractionController,
     SpriteInteractionController,
@@ -61,7 +67,9 @@ from .ui.ui import (
     draw_brush_preview,
     draw_fingertip_marker,
     draw_fps,
+    draw_gesture_progress,
     draw_palette,
+    draw_resize_anchor,
     draw_tracking_feedback,
     draw_thumbnail_strip,
     draw_toolbar,
@@ -280,6 +288,7 @@ class AppRunner:
         if mode_name not in {"draw_mode", "select_mode"}:
             return False
         self.state.interaction_mode = mode_name
+        self.state.clear_resize_clutch()
         self.state.reset_interaction_transients()
         if self.drawing_canvas is not None:
             with self.canvas_lock:
@@ -477,6 +486,8 @@ class AppRunner:
         second_point = get_index_fingertip(all_hands[1], frame_width, frame_height)
 
         if selected_sprite and first_point and second_point:
+            self.state.resize_anchor_first_point = first_point
+            self.state.resize_anchor_second_point = second_point
             current_distance = get_fingertip_distance(first_point, second_point)
             if (
                 self.state.resizing_sprite_ref != id(selected_sprite)
@@ -497,6 +508,27 @@ class AppRunner:
             self.state.clear_resize()
         self.state.reset_interaction_transients()
 
+    def _resize_clutch_active(self, all_hands, selected_sprite, frame_width: int, frame_height: int, now: float) -> bool:
+        if selected_sprite is None or not is_two_hand_resize(all_hands):
+            self.state.clear_resize_clutch()
+            return False
+
+        pinch_threshold = PINCH_START_DISTANCE * self.state.hand_scale_factor
+        both_pinching = all(
+            is_pinching(hand, frame_width, frame_height, pinch_threshold)
+            for hand in all_hands[:2]
+        )
+        if not both_pinching:
+            self.state.clear_resize_clutch()
+            return False
+
+        if self.state.resize_clutch_started_at is None:
+            self.state.resize_clutch_started_at = now
+            self.state.set_status("Hold both pinches to resize", now, RESIZE_CLUTCH_SECONDS + 0.45)
+            return False
+
+        return now - self.state.resize_clutch_started_at >= RESIZE_CLUTCH_SECONDS
+
     def _handle_no_hands_detected(self) -> None:
         self.state.clear_resize()
         self.state.previous_pinch_active = False
@@ -507,6 +539,11 @@ class AppRunner:
         self.state.clear_drawing_path()
         self.state.clear_draw_pose()
         self.state.clear_fist_hold()
+        self.state.clear_color_toggle()
+        self.state.pinch_started_at = None
+        self.state.pinch_target_sprite_ref = None
+        self.state.hovered_sprite_ref = None
+        self.state.clear_resize_clutch()
         self.state.set_tracking_stability(0.0)
         self.state.tracking_status_text = "Waiting for hand"
         with self.sprites_lock:
@@ -654,6 +691,43 @@ class AppRunner:
                 self.state.tracking_stability,
                 self.state.tracking_status_text,
             )
+            if self.state.fist_start_time is not None:
+                draw_gesture_progress(
+                    output_frame,
+                    current_point,
+                    dwell_progress(self.state.fist_start_time, config.FINISH_HOLD_SECONDS, time.time()),
+                    "Hold to create sprite",
+                    (80, 255, 120),
+                )
+            elif self.state.color_toggle_hold_started_at is not None and not self.state.color_toggle_triggered:
+                draw_gesture_progress(
+                    output_frame,
+                    current_point,
+                    dwell_progress(
+                        self.state.color_toggle_hold_started_at,
+                        config.COLOR_TOGGLE_GESTURE_SECONDS,
+                        time.time(),
+                    ),
+                    "Hold to switch color",
+                )
+        elif self.state.pinch_started_at is not None and self.state.pinch_target_sprite_ref is not None:
+            draw_gesture_progress(
+                output_frame,
+                current_point,
+                dwell_progress(self.state.pinch_started_at, config.DRAG_CLUTCH_SECONDS, time.time()),
+                "Hold to drag",
+            )
+
+        if is_resize_mode:
+            scale_factor = None
+            if self.state.resize_anchor_distance and self.state.prev_resize_distance:
+                scale_factor = self.state.prev_resize_distance / self.state.resize_anchor_distance
+            draw_resize_anchor(
+                output_frame,
+                self.state.resize_anchor_first_point,
+                self.state.resize_anchor_second_point,
+                scale_factor,
+            )
         draw_fps(output_frame, self.state.fps)
         return output_frame
 
@@ -680,7 +754,13 @@ class AppRunner:
         ui_state = self._prepare_ui_state(frame, frame_width, frame_height)
         self._latest_ui_state = ui_state
 
-        is_resize_mode = self.state.interaction_mode == "select_mode" and is_two_hand_resize(all_hands)
+        now = time.time()
+        with self.sprites_lock:
+            selected_sprite = get_selected_sprite(self.sprites)
+        is_resize_mode = (
+            self.state.interaction_mode == "select_mode"
+            and self._resize_clutch_active(all_hands, selected_sprite, frame_width, frame_height, now)
+        )
         if not self.state.calibrated:
             if hand_landmarks is None:
                 self._handle_no_hands_detected()
@@ -692,7 +772,7 @@ class AppRunner:
                 all_hands=all_hands,
                 frame_width=frame_width,
                 frame_height=frame_height,
-                selected_sprite=ui_state.selected_sprite,
+                selected_sprite=selected_sprite,
             )
         elif hand_landmarks:
             current_point, _ = self._handle_hand_interactions(
@@ -708,6 +788,19 @@ class AppRunner:
             overlay_sprite(frame, sprite)
         for sprite in ui_state.sprite_snapshot:
             draw_sprite_selection(frame, sprite)
+        with self.sprites_lock:
+            hovered_sprite = next(
+                (sprite for sprite in self.sprites if id(sprite) == self.state.hovered_sprite_ref),
+                None,
+            )
+            delete_pending_sprite = next(
+                (sprite for sprite in self.sprites if id(sprite) == self.state.delete_pending_sprite_ref),
+                None,
+            )
+        if hovered_sprite is not None:
+            draw_sprite_candidate(frame, hovered_sprite)
+        if delete_pending_sprite is not None:
+            draw_sprite_delete_confirmation(frame, delete_pending_sprite)
         self._draw_hand_tracking_overlay(frame, hand_landmarks, frame_width, frame_height)
 
         elapsed = time.time() - loop_start

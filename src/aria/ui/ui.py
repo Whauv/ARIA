@@ -229,6 +229,42 @@ def draw_fingertip_marker(frame: np.ndarray, fingertip: tuple[int, int] | None, 
     cv2.circle(frame, fingertip, 10, color, 1)
 
 
+def draw_gesture_progress(
+    frame: np.ndarray,
+    center: tuple[int, int] | None,
+    progress: float,
+    label: str,
+    color: tuple[int, int, int] = (80, 220, 255),
+) -> None:
+    if center is None:
+        return
+
+    progress = max(0.0, min(1.0, progress))
+    radius = 22
+    cv2.circle(frame, center, radius, (60, 70, 80), 1, cv2.LINE_AA)
+    cv2.ellipse(frame, center, (radius, radius), -90, 0, int(progress * 360), color, 3, cv2.LINE_AA)
+    text_origin = (center[0] + 28, max(20, center[1] - 24))
+    cv2.putText(frame, label, text_origin, cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1, cv2.LINE_AA)
+
+
+def draw_resize_anchor(
+    frame: np.ndarray,
+    first_point: tuple[int, int] | None,
+    second_point: tuple[int, int] | None,
+    scale_factor: float | None,
+) -> None:
+    if first_point is None or second_point is None:
+        return
+
+    color = (80, 255, 120)
+    cv2.line(frame, first_point, second_point, color, 2, cv2.LINE_AA)
+    cv2.circle(frame, first_point, 8, color, 2, cv2.LINE_AA)
+    cv2.circle(frame, second_point, 8, color, 2, cv2.LINE_AA)
+    midpoint = ((first_point[0] + second_point[0]) // 2, (first_point[1] + second_point[1]) // 2)
+    label = "Resize" if scale_factor is None else f"Resize {scale_factor:.2f}x"
+    cv2.putText(frame, label, (midpoint[0] + 10, midpoint[1] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA)
+
+
 def draw_fps(frame: np.ndarray, fps: float) -> None:
     cv2.putText(
         frame,

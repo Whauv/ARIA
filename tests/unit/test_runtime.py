@@ -78,7 +78,7 @@ class SpriteInteractionControllerTests(unittest.TestCase):
             selected=False,
         )
 
-    def test_select_mode_prefers_topmost_hovered_sprite(self) -> None:
+    def test_select_mode_marks_topmost_hovered_sprite_without_changing_selection(self) -> None:
         state = RuntimeState()
         controller = SpriteInteractionController()
         low = self.make_sprite(10, 10, 1)
@@ -98,10 +98,11 @@ class SpriteInteractionControllerTests(unittest.TestCase):
             now=1.0,
         )
 
-        self.assertTrue(high.selected)
+        self.assertEqual(state.hovered_sprite_ref, id(high))
+        self.assertFalse(high.selected)
         self.assertFalse(low.selected)
 
-    def test_dragging_updates_selected_sprite_position(self) -> None:
+    def test_pinch_selects_then_hold_starts_dragging(self) -> None:
         state = RuntimeState()
         controller = SpriteInteractionController()
         sprite = self.make_sprite(10, 10, 1)
@@ -121,9 +122,65 @@ class SpriteInteractionControllerTests(unittest.TestCase):
             now=2.0,
         )
 
+        self.assertTrue(sprite.selected)
+        self.assertFalse(sprite.dragging)
+
+        controller.handle_select_mode(
+            state=state,
+            sprites=sprites,
+            thumbnail_items=[],
+            hit_point=(25, 25),
+            current_point=(40, 50),
+            pinch_active=True,
+            pinch_started=False,
+            frame_width=200,
+            frame_height=200,
+            now=2.0 + config.DRAG_CLUTCH_SECONDS + 0.1,
+        )
+
         self.assertTrue(sprite.dragging)
         self.assertTrue(sprite.selected)
         self.assertNotEqual((sprite.x, sprite.y), (10, 10))
+
+    def test_double_pinch_arms_delete_before_removing_sprite(self) -> None:
+        state = RuntimeState()
+        controller = SpriteInteractionController()
+        sprite = self.make_sprite(10, 10, 1)
+        sprites = [sprite]
+
+        for now in (1.0, 1.2):
+            controller.handle_select_mode(
+                state=state,
+                sprites=sprites,
+                thumbnail_items=[],
+                hit_point=(15, 15),
+                current_point=(15, 15),
+                pinch_active=True,
+                pinch_started=True,
+                frame_width=200,
+                frame_height=200,
+                now=now,
+            )
+            state.pinch_target_sprite_ref = None
+            state.pinch_started_at = None
+
+        self.assertEqual(len(sprites), 1)
+        self.assertEqual(state.delete_pending_sprite_ref, id(sprite))
+
+        controller.handle_select_mode(
+            state=state,
+            sprites=sprites,
+            thumbnail_items=[],
+            hit_point=(15, 15),
+            current_point=(15, 15),
+            pinch_active=True,
+            pinch_started=True,
+            frame_width=200,
+            frame_height=200,
+            now=1.4,
+        )
+
+        self.assertEqual(sprites, [])
 
 
 class DrawingInteractionControllerTests(unittest.TestCase):

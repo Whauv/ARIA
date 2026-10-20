@@ -120,3 +120,48 @@ def draw_sprite_selection(frame: np.ndarray, sprite: Sprite) -> None:
     top_left = (sprite.x, sprite.y)
     bottom_right = (sprite.x + sprite.w, sprite.y + sprite.h)
     cv2.rectangle(frame, top_left, bottom_right, SELECTED_BORDER_COLOR, SELECTION_BORDER_THICKNESS)
+    cv2.putText(
+        frame,
+        "SELECTED",
+        (sprite.x, max(18, sprite.y - 8)),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.45,
+        SELECTED_BORDER_COLOR,
+        1,
+        cv2.LINE_AA,
+    )
+
+
+def draw_sprite_candidate(frame: np.ndarray, sprite: Sprite) -> None:
+    if sprite.selected:
+        return
+
+    top_left = (sprite.x, sprite.y)
+    bottom_right = (sprite.x + sprite.w, sprite.y + sprite.h)
+    cv2.rectangle(frame, top_left, bottom_right, (80, 220, 255), 1, cv2.LINE_AA)
+    cv2.putText(
+        frame,
+        "PINCH TO SELECT",
+        (sprite.x, max(18, sprite.y - 8)),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.4,
+        (80, 220, 255),
+        1,
+        cv2.LINE_AA,
+    )
+
+
+def draw_sprite_delete_confirmation(frame: np.ndarray, sprite: Sprite) -> None:
+    top_left = (sprite.x - 4, sprite.y - 4)
+    bottom_right = (sprite.x + sprite.w + 4, sprite.y + sprite.h + 4)
+    cv2.rectangle(frame, top_left, bottom_right, (40, 40, 255), 2, cv2.LINE_AA)
+    cv2.putText(
+        frame,
+        "PINCH AGAIN TO DELETE",
+        (sprite.x, max(18, sprite.y - 10)),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.42,
+        (40, 40, 255),
+        1,
+        cv2.LINE_AA,
+    )

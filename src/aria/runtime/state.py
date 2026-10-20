@@ -24,6 +24,16 @@ class RuntimeState:
     last_pinched_sprite_ref: Optional[int] = None
     last_draw_pose_time: Optional[float] = None
     last_color_gesture_time: Optional[float] = None
+    color_toggle_hold_started_at: Optional[float] = None
+    color_toggle_triggered: bool = False
+    pinch_started_at: Optional[float] = None
+    pinch_target_sprite_ref: Optional[int] = None
+    hovered_sprite_ref: Optional[int] = None
+    delete_pending_sprite_ref: Optional[int] = None
+    delete_pending_expires_at: Optional[float] = None
+    resize_clutch_started_at: Optional[float] = None
+    resize_anchor_first_point: Optional[tuple[int, int]] = None
+    resize_anchor_second_point: Optional[tuple[int, int]] = None
     previous_pinch_active: bool = False
     status_text: str = STATUS_IDLE
     status_expires_at: Optional[float] = None
@@ -63,6 +73,19 @@ class RuntimeState:
         self.resize_anchor_distance = None
         self.resize_anchor_width = None
         self.resizing_sprite_ref = None
+        self.resize_anchor_first_point = None
+        self.resize_anchor_second_point = None
+
+    def clear_resize_clutch(self) -> None:
+        self.resize_clutch_started_at = None
+
+    def clear_color_toggle(self) -> None:
+        self.color_toggle_hold_started_at = None
+        self.color_toggle_triggered = False
+
+    def clear_delete_confirmation(self) -> None:
+        self.delete_pending_sprite_ref = None
+        self.delete_pending_expires_at = None
 
     def clear_fist_hold(self) -> None:
         self.fist_start_time = None
@@ -72,7 +95,12 @@ class RuntimeState:
         self.clear_drawing_path()
         self.clear_draw_pose()
         self.clear_fist_hold()
+        self.clear_color_toggle()
+        self.clear_delete_confirmation()
         self.previous_pinch_active = False
+        self.pinch_started_at = None
+        self.pinch_target_sprite_ref = None
+        self.hovered_sprite_ref = None
 
     def stroke_active(self) -> bool:
         return self.prev_draw_point is not None
