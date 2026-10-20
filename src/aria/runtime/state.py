@@ -50,6 +50,9 @@ class RuntimeState:
     calibration_sample_total: float = 0.0
     tracking_stability: float = 0.0
     tracking_status_text: str = "Waiting for hand"
+    tracking_recovery_hint: str = "Place your hand in view"
+    onboarding_visible: bool = True
+    settings_visible: bool = False
 
     def set_status(
         self, text: str, now: float | None = None, duration: float | None = None

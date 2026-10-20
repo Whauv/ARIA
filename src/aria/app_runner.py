@@ -18,6 +18,7 @@ from .config import (
     BASE_HAND_SPREAD,
     CALIBRATION_SECONDS,
     LINE_THICKNESS,
+    MAX_SCENE_HISTORY,
     MODE_BG_COLOR,
     PINCH_RELEASE_DISTANCE,
     PINCH_START_DISTANCE,
@@ -50,6 +51,13 @@ from .runtime.controllers import (
     point_in_any_rect,
     resize_for_mediapipe,
 )
+from .runtime.scene import (
+    SceneHistory,
+    SceneSnapshot,
+    clone_sprite,
+    load_project,
+    save_project,
+)
 from .runtime.services import (
     CaptureDevice,
     CaptureFactory,
@@ -68,11 +76,15 @@ from .ui.ui import (
     draw_fingertip_marker,
     draw_fps,
     draw_gesture_progress,
+    draw_onboarding,
     draw_palette,
     draw_resize_anchor,
+    draw_settings_panel,
     draw_thumbnail_strip,
     draw_toolbar,
     draw_tracking_feedback,
+    draw_tracking_recovery,
+    draw_voice_transcript,
     draw_warning_overlay,
     get_palette_items,
     get_thumbnail_items,
@@ -228,6 +240,8 @@ class AppRunner:
         self.canvas_lock = threading.Lock()
         self.frame_lock = threading.Lock()
         self.drawing_canvas: DrawingCanvas | None = None
+        self.scene_history = SceneHistory(MAX_SCENE_HISTORY)
+        self._last_scene_signature: tuple[object, ...] | None = None
         self._hands: HandTracker | None = None
         self._latest_ui_state: FrameUiState | None = None
 
@@ -261,6 +275,7 @@ class AppRunner:
             return
         with self.canvas_lock:
             self.drawing_canvas.clear()
+        self._record_scene()
 
     def delete_selected_sprite(self) -> bool:
         with self.sprites_lock:
@@ -272,7 +287,8 @@ class AppRunner:
             if self.sprites:
                 top_sprite = max(self.sprites, key=lambda item: item.z_index)
                 top_sprite.selected = True
-            return True
+        self._record_scene()
+        return True
 
     def scale_selected_sprite(self, scale_factor: float) -> bool:
         with self.sprites_lock:
@@ -284,19 +300,114 @@ class AppRunner:
                 self.state.frame_dimensions["width"],
                 self.state.frame_dimensions["height"],
             )
-            return True
+        self._record_scene()
+        return True
+
+    def _capture_scene(self) -> SceneSnapshot | None:
+        if self.drawing_canvas is None:
+            return None
+        with self.canvas_lock, self.sprites_lock:
+            return SceneSnapshot(
+                canvas=self.drawing_canvas.canvas.copy(),
+                strokes=[dict(stroke) for stroke in self.drawing_canvas.strokes],
+                brush_color=self.drawing_canvas.brush_color,
+                sprites=[clone_sprite(sprite) for sprite in self.sprites],
+                interaction_mode=self.state.interaction_mode,
+                brush_name=self.state.brush_name,
+            )
+
+    def _record_scene(self) -> None:
+        snapshot = self._capture_scene()
+        if snapshot is not None:
+            self.scene_history.record(snapshot)
+            self._last_scene_signature = self._scene_signature()
+
+    def _scene_signature(self) -> tuple[object, ...] | None:
+        if self.drawing_canvas is None:
+            return None
+        with self.canvas_lock, self.sprites_lock:
+            sprite_state = tuple(
+                (
+                    sprite.x,
+                    sprite.y,
+                    sprite.w,
+                    sprite.h,
+                    sprite.z_index,
+                    sprite.selected,
+                )
+                for sprite in self.sprites
+            )
+            return (
+                len(self.drawing_canvas.strokes),
+                int(np.count_nonzero(self.drawing_canvas.canvas)),
+                sprite_state,
+                self.state.interaction_mode,
+                self.state.brush_name,
+            )
+
+    def _record_scene_if_changed(self) -> None:
+        with self.sprites_lock:
+            interaction_in_progress = any(sprite.dragging for sprite in self.sprites)
+        if (
+            self.state.stroke_active()
+            or interaction_in_progress
+            or self.state.resizing_sprite_ref is not None
+        ):
+            return
+        signature = self._scene_signature()
+        if signature != self._last_scene_signature:
+            self._record_scene()
+
+    def _restore_scene(self, snapshot: SceneSnapshot) -> None:
+        if self.drawing_canvas is None:
+            self.drawing_canvas = DrawingCanvas(snapshot.canvas.shape)
+        with self.canvas_lock, self.sprites_lock:
+            self.drawing_canvas.canvas = snapshot.canvas.copy()
+            self.drawing_canvas.strokes = [dict(stroke) for stroke in snapshot.strokes]
+            self.drawing_canvas.undo_stack = [snapshot.canvas.copy()]
+            self.drawing_canvas.brush_color = snapshot.brush_color
+            self.drawing_canvas.reset_stroke()
+            self.sprites = [clone_sprite(sprite) for sprite in snapshot.sprites]
+        self.state.interaction_mode = snapshot.interaction_mode
+        self.state.brush_name = snapshot.brush_name
+        self.state.reset_interaction_transients()
+        self._last_scene_signature = self._scene_signature()
 
     def undo_last_stroke(self) -> bool:
-        if self.drawing_canvas is None:
+        snapshot = self.scene_history.undo()
+        if snapshot is None:
             return False
-        with self.canvas_lock:
-            return self.drawing_canvas.undo_last_stroke()
+        self._restore_scene(snapshot)
+        return True
+
+    def redo_last_scene(self) -> bool:
+        snapshot = self.scene_history.redo()
+        if snapshot is None:
+            return False
+        self._restore_scene(snapshot)
+        return True
 
     def save_snapshot(self, path: str) -> bool:
         frame = self.get_current_frame()
         if frame is None:
             return False
         return cv2.imwrite(path, frame)
+
+    def save_project(self, path: str = config.DEFAULT_PROJECT_PATH) -> bool:
+        snapshot = self._capture_scene()
+        if snapshot is None:
+            return False
+        save_project(path, snapshot)
+        return True
+
+    def load_project(self, path: str = config.DEFAULT_PROJECT_PATH) -> bool:
+        try:
+            snapshot = load_project(path)
+        except (OSError, ValueError, KeyError):
+            return False
+        self._restore_scene(snapshot)
+        self._record_scene()
+        return True
 
     def set_brush_color(self, color_name: str) -> bool:
         color = config.get_brush_color(color_name)
@@ -365,6 +476,10 @@ class AppRunner:
         if event != getattr(cv2, "EVENT_LBUTTONDOWN", 1):
             return
 
+        if self.state.onboarding_visible:
+            self.state.onboarding_visible = False
+            return
+
         ui_state = self._latest_ui_state
         if ui_state is None:
             return
@@ -391,7 +506,24 @@ class AppRunner:
     def _wait_for_exit(self, wait_ms: int) -> bool:
         if not hasattr(cv2, "waitKey"):
             return False
-        return cv2.waitKey(wait_ms) & 0xFF == ord("q")
+        key = cv2.waitKey(wait_ms) & 0xFF
+        if key == ord("q"):
+            return True
+        if key == ord("h"):
+            self.state.onboarding_visible = not self.state.onboarding_visible
+        elif key == ord("s"):
+            self.state.settings_visible = not self.state.settings_visible
+        elif key == ord("u") and self.undo_last_stroke():
+            self.state.set_status("Undid scene", time.time(), 0.8)
+        elif key == ord("r") and self.redo_last_scene():
+            self.state.set_status("Redid scene", time.time(), 0.8)
+        elif key == ord("p"):
+            text = "Project saved" if self.save_project() else "Save unavailable"
+            self.state.set_status(text, time.time(), 0.8)
+        elif key == ord("l"):
+            text = "Project loaded" if self.load_project() else "No project found"
+            self.state.set_status(text, time.time(), 0.8)
+        return False
 
     def _initialize_capture(self):
         cap = self.capture_factory()
@@ -441,6 +573,7 @@ class AppRunner:
         if raw_fingertip is None:
             self.state.set_tracking_stability(0.0)
             self.state.tracking_status_text = "Waiting for hand"
+            self.state.tracking_recovery_hint = "Place your hand in view"
             return
 
         if self.state.prev_smoothed_point is None:
@@ -448,6 +581,7 @@ class AppRunner:
             self.state.tracking_status_text = (
                 "DRAW READY" if self.state.calibrated else "Calibrating hand..."
             )
+            self.state.tracking_recovery_hint = "Move slowly to begin"
             return
 
         movement = math.hypot(
@@ -458,10 +592,13 @@ class AppRunner:
         self.state.set_tracking_stability(stability)
         if stability >= TRACKING_STABLE_THRESHOLD:
             self.state.tracking_status_text = "DRAW READY"
+            self.state.tracking_recovery_hint = "Tracking stable"
         elif stability <= TRACKING_UNSTABLE_THRESHOLD:
             self.state.tracking_status_text = "TRACKING UNSTABLE"
+            self.state.tracking_recovery_hint = "Improve lighting or hold steady"
         else:
             self.state.tracking_status_text = "Hold steady"
+            self.state.tracking_recovery_hint = "Slow your fingertip movement"
 
     def _prepare_ui_state(
         self, frame, frame_width: int, frame_height: int
@@ -629,6 +766,7 @@ class AppRunner:
         self.state.clear_resize_clutch()
         self.state.set_tracking_stability(0.0)
         self.state.tracking_status_text = "Waiting for hand"
+        self.state.tracking_recovery_hint = "Place your hand in view"
         with self.sprites_lock:
             for sprite in self.sprites:
                 sprite.dragging = False
@@ -840,6 +978,11 @@ class AppRunner:
                 self.state.tracking_stability,
                 self.state.tracking_status_text,
             )
+            draw_tracking_recovery(
+                output_frame,
+                self.state.tracking_stability,
+                self.state.tracking_recovery_hint,
+            )
             if self.state.fist_start_time is not None:
                 draw_gesture_progress(
                     output_frame,
@@ -891,6 +1034,13 @@ class AppRunner:
                 self.state.resize_anchor_second_point,
                 scale_factor,
             )
+        draw_voice_transcript(
+            output_frame, self.jarvis.last_transcript, self.jarvis.last_response
+        )
+        if self.state.settings_visible:
+            draw_settings_panel(output_frame, self.state)
+        if self.state.onboarding_visible:
+            draw_onboarding(output_frame)
         draw_fps(output_frame, self.state.fps)
         return output_frame
 
@@ -905,6 +1055,7 @@ class AppRunner:
         frame = enhance_low_light(frame)
         if self.drawing_canvas is None:
             self.drawing_canvas = DrawingCanvas(frame.shape)
+            self._record_scene()
 
         frame_height, frame_width = frame.shape[:2]
         self.state.frame_dimensions["width"] = frame_width
@@ -999,6 +1150,7 @@ class AppRunner:
         with self.frame_lock:
             self.state.latest_frame = output_frame.copy()
         self.diagnostics.record_frame(elapsed, self.state.status_text)
+        self._record_scene_if_changed()
         return True
 
     def run(self) -> None:
