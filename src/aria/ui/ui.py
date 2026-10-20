@@ -446,3 +446,132 @@ def draw_tracking_feedback(
         2,
         cv2.LINE_AA,
     )
+
+
+def draw_tracking_recovery(
+    frame: np.ndarray, tracking_stability: float, recovery_hint: str
+) -> None:
+    left, top = 14, 118
+    width, height = 150, 8
+    cv2.rectangle(frame, (left, top), (left + width, top + height), (45, 52, 64), -1)
+    filled = int(width * max(0.0, min(1.0, tracking_stability)))
+    color = (
+        (80, 255, 120)
+        if tracking_stability >= TRACKING_STABLE_THRESHOLD
+        else (0, 180, 255)
+    )
+    cv2.rectangle(frame, (left, top), (left + filled, top + height), color, -1)
+    cv2.putText(
+        frame,
+        recovery_hint,
+        (left, top + 28),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.42,
+        BUTTON_TEXT_COLOR,
+        1,
+        cv2.LINE_AA,
+    )
+
+
+def draw_onboarding(frame: np.ndarray) -> None:
+    overlay = frame.copy()
+    cv2.rectangle(
+        overlay, (32, 42), (frame.shape[1] - 32, frame.shape[0] - 42), (14, 20, 32), -1
+    )
+    frame[:] = cv2.addWeighted(overlay, 0.88, frame, 0.12, 0.0)
+    lines = (
+        ("WELCOME TO ARIA", 0.8, (80, 255, 180)),
+        ("1. Point your index finger to draw.", 0.52, BUTTON_TEXT_COLOR),
+        (
+            "2. Hold a fist to turn a drawing into a movable sprite.",
+            0.52,
+            BUTTON_TEXT_COLOR,
+        ),
+        (
+            "3. In Select Mode: pinch to select, hold to drag, two pinches to resize.",
+            0.52,
+            BUTTON_TEXT_COLOR,
+        ),
+        (
+            "Mouse: click controls.  Keys: H guide, S settings, U undo, R redo, P save project, L load project.",
+            0.45,
+            (160, 210, 255),
+        ),
+        ("Press H or click anywhere to begin.", 0.52, (80, 255, 180)),
+    )
+    y = 108
+    for text, scale, color in lines:
+        cv2.putText(
+            frame,
+            text,
+            (60, y),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            scale,
+            color,
+            1 if scale < 0.7 else 2,
+            cv2.LINE_AA,
+        )
+        y += 54
+
+
+def draw_settings_panel(frame: np.ndarray, state) -> None:
+    left, top, right, bottom = frame.shape[1] - 290, 112, frame.shape[1] - 16, 270
+    _draw_panel(frame, (left, top, right, bottom), PANEL_BG_COLOR, 0.82)
+    cv2.rectangle(frame, (left, top), (right, bottom), BUTTON_HOVER_COLOR, 1)
+    lines = (
+        "SETTINGS  [S to close]",
+        f"Draw dwell: {state.hand_scale_factor:.2f} hand scale",
+        f"Tracking: {int(state.tracking_stability * 100)}%",
+        "H: gesture guide",
+        "P / L: save / load project",
+        "U / R: scene undo / redo",
+    )
+    y = top + 26
+    for index, text in enumerate(lines):
+        cv2.putText(
+            frame,
+            text,
+            (left + 12, y),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.45,
+            (80, 255, 180) if index == 0 else BUTTON_TEXT_COLOR,
+            1,
+            cv2.LINE_AA,
+        )
+        y += 24
+
+
+def draw_voice_transcript(
+    frame: np.ndarray, transcript: str | None, response: str | None
+) -> None:
+    if not transcript and not response:
+        return
+    left, bottom = 190, frame.shape[0] - TOOLBAR_HEIGHT - 18
+    _draw_panel(
+        frame,
+        (left, bottom - 54, min(frame.shape[1] - 96, left + 420), bottom),
+        PANEL_BG_COLOR,
+        0.56,
+    )
+    if transcript:
+        cv2.putText(
+            frame,
+            f"Heard: {transcript[:42]}",
+            (left + 10, bottom - 32),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.42,
+            BUTTON_TEXT_COLOR,
+            1,
+            cv2.LINE_AA,
+        )
+    if response:
+        cv2.putText(
+            frame,
+            f"ARIA: {response[:42]}",
+            (left + 10, bottom - 10),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.42,
+            (80, 220, 255),
+            1,
+            cv2.LINE_AA,
+        )

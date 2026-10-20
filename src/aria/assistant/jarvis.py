@@ -130,6 +130,8 @@ class JarvisAssistant:
         self.stop_event = threading.Event()
         self.voice_available = True
         self.last_error: str | None = None
+        self.last_transcript: str | None = None
+        self.last_response: str | None = None
         self.thread = threading.Thread(
             target=self._run_loop, daemon=True, name="aria-jarvis"
         )
@@ -211,11 +213,14 @@ class JarvisAssistant:
         try:
             command = self._capture_command()
             if not command:
+                self.last_transcript = "No speech detected"
                 self._speak_async("I did not catch that.")
                 return
 
+            self.last_transcript = command
             response = command_handler(command, self.context)
             if response:
+                self.last_response = response
                 self._speak_async(response)
         finally:
             self.listening_event.clear()

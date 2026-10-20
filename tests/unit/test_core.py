@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import tempfile
 import unittest
 
 import cv2
@@ -15,6 +16,7 @@ from aria.drawing.canvas import (
     smooth_point,
 )
 from aria.drawing.sprite import create_sprite_from_canvas
+from aria.runtime.scene import SceneHistory, SceneSnapshot, load_project, save_project
 from aria.vision.gestures import (
     dwell_progress,
     get_fingertip_distance,
@@ -164,6 +166,33 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.get_brush_color("red"), config.BRUSH_COLORS["red"])
         self.assertEqual(config.get_brush_color("RED"), config.BRUSH_COLORS["red"])
         self.assertIsNone(config.get_brush_color("missing"))
+
+
+@unittest.skipUnless(
+    HAS_FULL_CV2, "Full OpenCV bindings are not available in this Python environment"
+)
+class SceneHistoryTests(unittest.TestCase):
+    def make_snapshot(self, value: int) -> SceneSnapshot:
+        canvas = np.full((12, 12, 3), value, dtype=np.uint8)
+        return SceneSnapshot(canvas, [], (0, 255, 0), [], "draw_mode", "green")
+
+    def test_history_supports_undo_and_redo(self) -> None:
+        history = SceneHistory(3)
+        history.record(self.make_snapshot(0))
+        history.record(self.make_snapshot(1))
+
+        self.assertEqual(int(history.undo().canvas[0, 0, 0]), 0)
+        self.assertEqual(int(history.redo().canvas[0, 0, 0]), 1)
+
+    def test_project_round_trip_preserves_scene(self) -> None:
+        snapshot = self.make_snapshot(42)
+        with tempfile.TemporaryDirectory(dir=os.getcwd()) as directory:
+            path = os.path.join(directory, "project")
+            saved_path = save_project(path, snapshot)
+            restored = load_project(saved_path)
+
+        self.assertTrue(np.array_equal(restored.canvas, snapshot.canvas))
+        self.assertEqual(restored.brush_name, "green")
 
 
 if __name__ == "__main__":
