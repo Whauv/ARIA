@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Optional
 
 import numpy as np
 
@@ -10,47 +9,51 @@ from ..config import DEFAULT_BRUSH_NAME, STATUS_IDLE
 
 @dataclass
 class RuntimeState:
-    frame_dimensions: dict[str, int] = field(default_factory=lambda: {"width": 0, "height": 0})
-    prev_smoothed_point: Optional[tuple[float, float]] = None
-    prev_draw_point: Optional[tuple[int, int]] = None
-    prev_resize_distance: Optional[float] = None
-    resize_anchor_distance: Optional[float] = None
-    resize_anchor_width: Optional[int] = None
-    resizing_sprite_ref: Optional[int] = None
-    fist_start_time: Optional[float] = None
-    hover_target_id: Optional[str] = None
-    hover_start_time: Optional[float] = None
-    last_pinch_time: Optional[float] = None
-    last_pinched_sprite_ref: Optional[int] = None
-    last_draw_pose_time: Optional[float] = None
-    last_color_gesture_time: Optional[float] = None
-    color_toggle_hold_started_at: Optional[float] = None
+    frame_dimensions: dict[str, int] = field(
+        default_factory=lambda: {"width": 0, "height": 0}
+    )
+    prev_smoothed_point: tuple[float, float] | None = None
+    prev_draw_point: tuple[int, int] | None = None
+    prev_resize_distance: float | None = None
+    resize_anchor_distance: float | None = None
+    resize_anchor_width: int | None = None
+    resizing_sprite_ref: int | None = None
+    fist_start_time: float | None = None
+    hover_target_id: str | None = None
+    hover_start_time: float | None = None
+    last_pinch_time: float | None = None
+    last_pinched_sprite_ref: int | None = None
+    last_draw_pose_time: float | None = None
+    last_color_gesture_time: float | None = None
+    color_toggle_hold_started_at: float | None = None
     color_toggle_triggered: bool = False
-    pinch_started_at: Optional[float] = None
-    pinch_target_sprite_ref: Optional[int] = None
-    hovered_sprite_ref: Optional[int] = None
-    delete_pending_sprite_ref: Optional[int] = None
-    delete_pending_expires_at: Optional[float] = None
-    resize_clutch_started_at: Optional[float] = None
-    resize_anchor_first_point: Optional[tuple[int, int]] = None
-    resize_anchor_second_point: Optional[tuple[int, int]] = None
+    pinch_started_at: float | None = None
+    pinch_target_sprite_ref: int | None = None
+    hovered_sprite_ref: int | None = None
+    delete_pending_sprite_ref: int | None = None
+    delete_pending_expires_at: float | None = None
+    resize_clutch_started_at: float | None = None
+    resize_anchor_first_point: tuple[int, int] | None = None
+    resize_anchor_second_point: tuple[int, int] | None = None
     previous_pinch_active: bool = False
     status_text: str = STATUS_IDLE
-    status_expires_at: Optional[float] = None
+    status_expires_at: float | None = None
     interaction_mode: str = "draw_mode"
     brush_name: str = DEFAULT_BRUSH_NAME
     fps: float = 0.0
-    ai_warning_text: Optional[str] = None
-    latest_frame: Optional[np.ndarray] = None
+    ai_warning_text: str | None = None
+    latest_frame: np.ndarray | None = None
     hand_scale_factor: float = 1.0
     calibrated: bool = False
-    calibration_started_at: Optional[float] = None
+    calibration_started_at: float | None = None
     calibration_sample_count: int = 0
     calibration_sample_total: float = 0.0
     tracking_stability: float = 0.0
     tracking_status_text: str = "Waiting for hand"
 
-    def set_status(self, text: str, now: float | None = None, duration: float | None = None) -> None:
+    def set_status(
+        self, text: str, now: float | None = None, duration: float | None = None
+    ) -> None:
         self.status_text = text
         if now is not None and duration is not None:
             self.status_expires_at = now + duration

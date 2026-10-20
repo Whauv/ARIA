@@ -42,7 +42,9 @@ def parse_command(command: str) -> ParsedCommand:
                     raw_text=normalized,
                     color_name=supported_color,
                 )
-        return ParsedCommand(intent=CommandIntent.CHANGE_BRUSH_COLOR, raw_text=normalized)
+        return ParsedCommand(
+            intent=CommandIntent.CHANGE_BRUSH_COLOR, raw_text=normalized
+        )
 
     if normalized in {"clear", "clear canvas"}:
         return ParsedCommand(intent=CommandIntent.CLEAR_CANVAS, raw_text=normalized)
@@ -51,10 +53,14 @@ def parse_command(command: str) -> ParsedCommand:
         return ParsedCommand(intent=CommandIntent.DELETE_SELECTION, raw_text=normalized)
 
     if normalized in {"make it bigger", "enlarge"}:
-        return ParsedCommand(intent=CommandIntent.SCALE_SELECTION, raw_text=normalized, scale_factor=1.5)
+        return ParsedCommand(
+            intent=CommandIntent.SCALE_SELECTION, raw_text=normalized, scale_factor=1.5
+        )
 
     if normalized in {"make it smaller", "shrink"}:
-        return ParsedCommand(intent=CommandIntent.SCALE_SELECTION, raw_text=normalized, scale_factor=0.5)
+        return ParsedCommand(
+            intent=CommandIntent.SCALE_SELECTION, raw_text=normalized, scale_factor=0.5
+        )
 
     if normalized == "undo":
         return ParsedCommand(intent=CommandIntent.UNDO, raw_text=normalized)
@@ -78,9 +84,15 @@ def parse_command(command: str) -> ParsedCommand:
     }
 
     if any(phrase in normalized for phrase in select_mode_phrases):
-        return ParsedCommand(intent=CommandIntent.SWITCH_MODE, raw_text=normalized, mode_name="select_mode")
+        return ParsedCommand(
+            intent=CommandIntent.SWITCH_MODE,
+            raw_text=normalized,
+            mode_name="select_mode",
+        )
 
     if any(phrase in normalized for phrase in draw_mode_phrases):
-        return ParsedCommand(intent=CommandIntent.SWITCH_MODE, raw_text=normalized, mode_name="draw_mode")
+        return ParsedCommand(
+            intent=CommandIntent.SWITCH_MODE, raw_text=normalized, mode_name="draw_mode"
+        )
 
     return ParsedCommand(intent=CommandIntent.UNKNOWN, raw_text=normalized)

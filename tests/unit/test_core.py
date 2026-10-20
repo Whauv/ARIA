@@ -3,20 +3,32 @@ from __future__ import annotations
 import os
 import unittest
 
-import numpy as np
 import cv2
+import numpy as np
 
 from aria import config
 from aria.ai import ai_utils
-from aria.drawing.canvas import DrawingCanvas, adaptive_smooth_point, interpolate_segment, smooth_point
+from aria.drawing.canvas import (
+    DrawingCanvas,
+    adaptive_smooth_point,
+    interpolate_segment,
+    smooth_point,
+)
 from aria.drawing.sprite import create_sprite_from_canvas
-from aria.vision.gestures import dwell_progress, get_fingertip_distance, is_double_pinch, is_draw_pose, point_in_rect
-
+from aria.vision.gestures import (
+    dwell_progress,
+    get_fingertip_distance,
+    is_double_pinch,
+    is_draw_pose,
+    point_in_rect,
+)
 
 HAS_FULL_CV2 = all(hasattr(cv2, attr) for attr in ("line", "imencode", "cvtColor"))
 
 
-@unittest.skipUnless(HAS_FULL_CV2, "Full OpenCV bindings are not available in this Python environment")
+@unittest.skipUnless(
+    HAS_FULL_CV2, "Full OpenCV bindings are not available in this Python environment"
+)
 class DrawingCanvasTests(unittest.TestCase):
     def test_add_segment_and_undo_restore_previous_snapshot(self) -> None:
         canvas = DrawingCanvas((60, 60, 3))
@@ -43,7 +55,9 @@ class DrawingCanvasTests(unittest.TestCase):
         self.assertGreaterEqual(len(canvas.undo_stack), 2)
 
 
-@unittest.skipUnless(HAS_FULL_CV2, "Full OpenCV bindings are not available in this Python environment")
+@unittest.skipUnless(
+    HAS_FULL_CV2, "Full OpenCV bindings are not available in this Python environment"
+)
 class SpriteTests(unittest.TestCase):
     def test_create_sprite_from_canvas_returns_bgra_sprite(self) -> None:
         canvas = np.zeros((80, 80, 3), dtype=np.uint8)
@@ -120,7 +134,10 @@ class GestureUtilityTests(unittest.TestCase):
 
 
 class AiUtilsTests(unittest.TestCase):
-    @unittest.skipUnless(HAS_FULL_CV2, "Full OpenCV bindings are not available in this Python environment")
+    @unittest.skipUnless(
+        HAS_FULL_CV2,
+        "Full OpenCV bindings are not available in this Python environment",
+    )
     def test_frame_to_base64_png_returns_content(self) -> None:
         frame = np.zeros((10, 10, 3), dtype=np.uint8)
         encoded = ai_utils.frame_to_base64_png(frame)
@@ -131,7 +148,9 @@ class AiUtilsTests(unittest.TestCase):
         original_google = os.environ.get("GOOGLE_API_KEY")
         try:
             os.environ["GOOGLE_API_KEY"] = "test-key"
-            expected = ai_utils.google_genai is not None or ai_utils.legacy_genai is not None
+            expected = (
+                ai_utils.google_genai is not None or ai_utils.legacy_genai is not None
+            )
             self.assertEqual(ai_utils.gemini_enabled(), expected)
         finally:
             if original_google is None:

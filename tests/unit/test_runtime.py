@@ -22,7 +22,14 @@ from aria.runtime.state import RuntimeState
 class UIInteractionControllerTests(unittest.TestCase):
     def test_hover_candidate_is_blocked_while_drawing_stroke_is_active(self) -> None:
         controller = UIInteractionController()
-        toolbar_items = [{"id": "toolbar:draw_mode", "action": "draw_mode", "label": "Draw Mode", "rect": (0, 0, 100, 40)}]
+        toolbar_items = [
+            {
+                "id": "toolbar:draw_mode",
+                "action": "draw_mode",
+                "label": "Draw Mode",
+                "rect": (0, 0, 100, 40),
+            }
+        ]
 
         candidate = controller.resolve_hover_candidate(
             hover_point=(20, 20),
@@ -78,7 +85,9 @@ class SpriteInteractionControllerTests(unittest.TestCase):
             selected=False,
         )
 
-    def test_select_mode_marks_topmost_hovered_sprite_without_changing_selection(self) -> None:
+    def test_select_mode_marks_topmost_hovered_sprite_without_changing_selection(
+        self,
+    ) -> None:
         state = RuntimeState()
         controller = SpriteInteractionController()
         low = self.make_sprite(10, 10, 1)
@@ -190,9 +199,13 @@ class DrawingInteractionControllerTests(unittest.TestCase):
         canvas = Mock()
         controller = DrawingInteractionController()
 
-        with patch("aria.runtime.controllers.is_closed_fist", return_value=False), patch(
-            "aria.runtime.controllers.is_draw_pose", return_value=True
-        ), patch("aria.runtime.controllers.is_index_and_middle_up", return_value=False):
+        with (
+            patch("aria.runtime.controllers.is_closed_fist", return_value=False),
+            patch("aria.runtime.controllers.is_draw_pose", return_value=True),
+            patch(
+                "aria.runtime.controllers.is_index_and_middle_up", return_value=False
+            ),
+        ):
             controller.handle_draw_mode(
                 state=state,
                 hand_landmarks=object(),
@@ -209,7 +222,9 @@ class DrawingInteractionControllerTests(unittest.TestCase):
         self.assertEqual(state.prev_draw_point, (30, 40))
         self.assertEqual(state.status_text, config.STATUS_DRAWING)
 
-    def test_draw_mode_grace_period_keeps_stroke_alive_for_one_noisy_frame(self) -> None:
+    def test_draw_mode_grace_period_keeps_stroke_alive_for_one_noisy_frame(
+        self,
+    ) -> None:
         state = RuntimeState()
         state.hover_target_id = None
         state.last_draw_pose_time = 1.0
@@ -217,9 +232,13 @@ class DrawingInteractionControllerTests(unittest.TestCase):
         canvas = Mock()
         controller = DrawingInteractionController()
 
-        with patch("aria.runtime.controllers.is_closed_fist", return_value=False), patch(
-            "aria.runtime.controllers.is_draw_pose", return_value=False
-        ), patch("aria.runtime.controllers.is_index_and_middle_up", return_value=False):
+        with (
+            patch("aria.runtime.controllers.is_closed_fist", return_value=False),
+            patch("aria.runtime.controllers.is_draw_pose", return_value=False),
+            patch(
+                "aria.runtime.controllers.is_index_and_middle_up", return_value=False
+            ),
+        ):
             controller.handle_draw_mode(
                 state=state,
                 hand_landmarks=object(),
@@ -246,9 +265,13 @@ class DrawingInteractionControllerTests(unittest.TestCase):
         canvas = Mock()
         controller = DrawingInteractionController()
 
-        with patch("aria.runtime.controllers.is_closed_fist", return_value=False), patch(
-            "aria.runtime.controllers.is_draw_pose", return_value=True
-        ), patch("aria.runtime.controllers.is_index_and_middle_up", return_value=False):
+        with (
+            patch("aria.runtime.controllers.is_closed_fist", return_value=False),
+            patch("aria.runtime.controllers.is_draw_pose", return_value=True),
+            patch(
+                "aria.runtime.controllers.is_index_and_middle_up", return_value=False
+            ),
+        ):
             controller.handle_draw_mode(
                 state=state,
                 hand_landmarks=object(),
@@ -272,9 +295,13 @@ class DrawingInteractionControllerTests(unittest.TestCase):
         canvas = Mock()
         controller = DrawingInteractionController()
 
-        with patch("aria.runtime.controllers.is_closed_fist", return_value=False), patch(
-            "aria.runtime.controllers.is_draw_pose", return_value=True
-        ), patch("aria.runtime.controllers.is_index_and_middle_up", return_value=False):
+        with (
+            patch("aria.runtime.controllers.is_closed_fist", return_value=False),
+            patch("aria.runtime.controllers.is_draw_pose", return_value=True),
+            patch(
+                "aria.runtime.controllers.is_index_and_middle_up", return_value=False
+            ),
+        ):
             controller.handle_draw_mode(
                 state=state,
                 hand_landmarks=object(),
@@ -297,12 +324,35 @@ class DrawingInteractionControllerTests(unittest.TestCase):
 
 class RuntimeUtilityTests(unittest.TestCase):
     def test_warning_text_combines_flags(self) -> None:
-        self.assertEqual(build_warning_text("AI disabled", False, "voice failed"), "AI off | Voice off")
+        self.assertEqual(
+            build_warning_text("AI disabled", False, "voice failed"),
+            "AI off | Voice off",
+        )
         self.assertEqual(build_warning_text(None, True, None), None)
 
     def test_selection_helpers(self) -> None:
-        sprite = Sprite(np.zeros((5, 5, 4), dtype=np.uint8), np.zeros((5, 5, 4), dtype=np.uint8), 0, 0, 5, 5, True, 1, True)
-        other = Sprite(np.zeros((5, 5, 4), dtype=np.uint8), np.zeros((5, 5, 4), dtype=np.uint8), 0, 0, 5, 5, True, 2, False)
+        sprite = Sprite(
+            np.zeros((5, 5, 4), dtype=np.uint8),
+            np.zeros((5, 5, 4), dtype=np.uint8),
+            0,
+            0,
+            5,
+            5,
+            True,
+            1,
+            True,
+        )
+        other = Sprite(
+            np.zeros((5, 5, 4), dtype=np.uint8),
+            np.zeros((5, 5, 4), dtype=np.uint8),
+            0,
+            0,
+            5,
+            5,
+            True,
+            2,
+            False,
+        )
         sprites = [sprite, other]
 
         clear_sprite_selection(sprites)

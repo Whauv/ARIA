@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
 
 import cv2
 import numpy as np
 
-from ..config import MAX_SPRITE_SIZE, MIN_SPRITE_SIZE, SELECTED_BORDER_COLOR, SELECTION_BORDER_THICKNESS
+from ..config import (
+    MAX_SPRITE_SIZE,
+    MIN_SPRITE_SIZE,
+    SELECTED_BORDER_COLOR,
+    SELECTION_BORDER_THICKNESS,
+)
 
 
 @dataclass
@@ -52,9 +56,13 @@ class Sprite:
         target_width = max(MIN_SPRITE_SIZE, min(MAX_SPRITE_SIZE, int(target_width)))
         original_h, original_w = self.original_img.shape[:2]
         aspect_ratio = original_h / original_w if original_w else 1.0
-        new_h = max(MIN_SPRITE_SIZE, min(MAX_SPRITE_SIZE, int(target_width * aspect_ratio)))
+        new_h = max(
+            MIN_SPRITE_SIZE, min(MAX_SPRITE_SIZE, int(target_width * aspect_ratio))
+        )
 
-        self.img = cv2.resize(self.original_img, (target_width, new_h), interpolation=cv2.INTER_LINEAR)
+        self.img = cv2.resize(
+            self.original_img, (target_width, new_h), interpolation=cv2.INTER_LINEAR
+        )
         self.w = target_width
         self.h = new_h
 
@@ -62,7 +70,7 @@ class Sprite:
         self.resize_from_original(factor)
 
 
-def create_sprite_from_canvas(canvas: np.ndarray, z_index: int) -> Optional[Sprite]:
+def create_sprite_from_canvas(canvas: np.ndarray, z_index: int) -> Sprite | None:
     canvas_gray = cv2.cvtColor(canvas, cv2.COLOR_BGR2GRAY)
     non_zero_points = cv2.findNonZero(canvas_gray)
     if non_zero_points is None:
@@ -119,7 +127,9 @@ def draw_sprite_selection(frame: np.ndarray, sprite: Sprite) -> None:
 
     top_left = (sprite.x, sprite.y)
     bottom_right = (sprite.x + sprite.w, sprite.y + sprite.h)
-    cv2.rectangle(frame, top_left, bottom_right, SELECTED_BORDER_COLOR, SELECTION_BORDER_THICKNESS)
+    cv2.rectangle(
+        frame, top_left, bottom_right, SELECTED_BORDER_COLOR, SELECTION_BORDER_THICKNESS
+    )
     cv2.putText(
         frame,
         "SELECTED",

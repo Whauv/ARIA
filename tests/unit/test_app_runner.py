@@ -1,17 +1,16 @@
 from __future__ import annotations
 
-from types import SimpleNamespace
 import unittest
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-import numpy as np
 import cv2
+import numpy as np
 
 from aria import config
 from aria.app_runner import AppRunner
 from aria.assistant.jarvis import JarvisContext
 from aria.drawing.canvas import DrawingCanvas
-
 
 HAS_CV2_IMWRITE = hasattr(cv2, "imwrite")
 
@@ -36,7 +35,9 @@ class FakeCapture:
 
 class FakeHandTracker:
     def __init__(self, results: object | Exception | None = None) -> None:
-        self.results = results if results is not None else SimpleNamespace(multi_hand_landmarks=[])
+        self.results = (
+            results if results is not None else SimpleNamespace(multi_hand_landmarks=[])
+        )
         self.closed = False
 
     def process(self, frame: np.ndarray) -> object:
@@ -69,7 +70,9 @@ class FakeAssistant:
 
 class AppRunnerTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.runner = AppRunner(window_name="ARIA Test", assistant_factory=FakeAssistant)
+        self.runner = AppRunner(
+            window_name="ARIA Test", assistant_factory=FakeAssistant
+        )
 
     def test_get_current_frame_returns_copy(self) -> None:
         frame = np.ones((8, 8, 3), dtype=np.uint8)
@@ -88,16 +91,24 @@ class AppRunnerTests(unittest.TestCase):
 
         self.assertTrue(changed)
         self.assertEqual(self.runner.state.brush_name, "red")
-        self.assertEqual(self.runner.drawing_canvas.brush_color, config.BRUSH_COLORS["red"])
+        self.assertEqual(
+            self.runner.drawing_canvas.brush_color, config.BRUSH_COLORS["red"]
+        )
 
     @patch("aria.app_runner.is_pinching", return_value=True)
     @patch("aria.app_runner.is_two_hand_resize", return_value=True)
-    def test_resize_requires_a_short_two_pinch_clutch(self, _is_two_hand_resize, _is_pinching) -> None:
+    def test_resize_requires_a_short_two_pinch_clutch(
+        self, _is_two_hand_resize, _is_pinching
+    ) -> None:
         hands = [object(), object()]
         selected_sprite = object()
 
-        self.assertFalse(self.runner._resize_clutch_active(hands, selected_sprite, 640, 480, 1.0))
-        self.assertFalse(self.runner._resize_clutch_active(hands, selected_sprite, 640, 480, 1.1))
+        self.assertFalse(
+            self.runner._resize_clutch_active(hands, selected_sprite, 640, 480, 1.0)
+        )
+        self.assertFalse(
+            self.runner._resize_clutch_active(hands, selected_sprite, 640, 480, 1.1)
+        )
         self.assertTrue(
             self.runner._resize_clutch_active(
                 hands,
@@ -108,7 +119,10 @@ class AppRunnerTests(unittest.TestCase):
             )
         )
 
-    @unittest.skipUnless(HAS_CV2_IMWRITE, "Full OpenCV bindings are not available in this Python environment")
+    @unittest.skipUnless(
+        HAS_CV2_IMWRITE,
+        "Full OpenCV bindings are not available in this Python environment",
+    )
     @patch("aria.app_runner.cv2.imwrite", return_value=True)
     def test_save_snapshot_uses_current_frame(self, mocked_imwrite) -> None:
         self.runner.state.latest_frame = np.zeros((5, 5, 3), dtype=np.uint8)
@@ -122,7 +136,9 @@ class AppRunnerTests(unittest.TestCase):
         capture = FakeCapture([np.zeros((24, 32, 3), dtype=np.uint8)])
         self.runner._hands = FakeHandTracker()
 
-        with patch.object(AppRunner, "_render_output", side_effect=lambda frame, *_args: frame.copy()):
+        with patch.object(
+            AppRunner, "_render_output", side_effect=lambda frame, *_args: frame.copy()
+        ):
             processed = self.runner.run_iteration(capture)
 
         self.assertTrue(processed)
@@ -134,7 +150,9 @@ class AppRunnerTests(unittest.TestCase):
         capture = FakeCapture([np.zeros((20, 20, 3), dtype=np.uint8)])
         self.runner._hands = FakeHandTracker(RuntimeError("tracker offline"))
 
-        with patch.object(AppRunner, "_render_output", side_effect=lambda frame, *_args: frame.copy()):
+        with patch.object(
+            AppRunner, "_render_output", side_effect=lambda frame, *_args: frame.copy()
+        ):
             processed = self.runner.run_iteration(capture)
 
         self.assertTrue(processed)
@@ -145,7 +163,9 @@ class AppRunnerTests(unittest.TestCase):
     @patch.object(AppRunner, "_wait_for_exit", side_effect=[True])
     @patch.object(AppRunner, "_show_frame")
     @patch.object(AppRunner, "_setup_window")
-    @patch.object(AppRunner, "_render_output", side_effect=lambda frame, *_args: frame.copy())
+    @patch.object(
+        AppRunner, "_render_output", side_effect=lambda frame, *_args: frame.copy()
+    )
     def test_run_starts_and_stops_runtime_services(
         self,
         _render_output,

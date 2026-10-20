@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Callable
 import math
+from collections.abc import Callable
+from dataclasses import dataclass
 
 import cv2
 import numpy as np
@@ -11,16 +11,16 @@ from .. import config
 from ..config import (
     COLOR_TOGGLE_GESTURE_SECONDS,
     DELETE_CONFIRM_SECONDS,
-    DRAG_CLUTCH_SECONDS,
     DOUBLE_PINCH_SECONDS,
+    DRAG_CLUTCH_SECONDS,
     DRAG_SMOOTHING_NEW_WEIGHT,
     DRAG_SMOOTHING_PREV_WEIGHT,
     DRAW_POSE_GRACE_SECONDS,
     DWELL_SECONDS,
     FINISH_HOLD_SECONDS,
-    MAX_SEGMENT_STEP_PX,
     MAX_MEDIAPIPE_HEIGHT,
     MAX_MEDIAPIPE_WIDTH,
+    MAX_SEGMENT_STEP_PX,
     MIN_DRAW_MOVEMENT_PX,
     SPRITE_HIT_PADDING,
     STATUS_DRAWING,
@@ -31,7 +31,13 @@ from ..config import (
 from ..drawing.canvas import DrawingCanvas, interpolate_segment
 from ..drawing.sprite import create_sprite_from_canvas
 from ..ui.ui import PaletteItem, ThumbnailItem, ToolbarItem, get_hover_padding
-from ..vision.gestures import is_closed_fist, is_double_pinch, is_draw_pose, is_index_and_middle_up, point_in_rect
+from ..vision.gestures import (
+    is_closed_fist,
+    is_double_pinch,
+    is_draw_pose,
+    is_index_and_middle_up,
+    point_in_rect,
+)
 from .state import RuntimeState
 
 
@@ -88,11 +94,21 @@ def resize_for_mediapipe(frame: np.ndarray) -> np.ndarray:
 
     resized_width = int(frame_width * scale)
     resized_height = int(frame_height * scale)
-    return cv2.resize(frame, (resized_width, resized_height), interpolation=cv2.INTER_AREA)
+    return cv2.resize(
+        frame, (resized_width, resized_height), interpolation=cv2.INTER_AREA
+    )
 
 
 def enhance_low_light(frame: np.ndarray) -> np.ndarray:
-    required_attrs = ("cvtColor", "split", "createCLAHE", "merge", "LUT", "COLOR_BGR2LAB", "COLOR_LAB2BGR")
+    required_attrs = (
+        "cvtColor",
+        "split",
+        "createCLAHE",
+        "merge",
+        "LUT",
+        "COLOR_BGR2LAB",
+        "COLOR_LAB2BGR",
+    )
     if not all(hasattr(cv2, attr) for attr in required_attrs):
         return frame
 
@@ -104,24 +120,35 @@ def enhance_low_light(frame: np.ndarray) -> np.ndarray:
 
     clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8))
     l_channel = clahe.apply(l_channel)
-    enhanced = cv2.cvtColor(cv2.merge((l_channel, a_channel, b_channel)), cv2.COLOR_LAB2BGR)
+    enhanced = cv2.cvtColor(
+        cv2.merge((l_channel, a_channel, b_channel)), cv2.COLOR_LAB2BGR
+    )
     gamma = 1.25 if mean_luma > 80 else 1.45
-    gamma_table = np.array([((index / 255.0) ** (1.0 / gamma)) * 255 for index in range(256)], dtype=np.uint8)
+    gamma_table = np.array(
+        [((index / 255.0) ** (1.0 / gamma)) * 255 for index in range(256)],
+        dtype=np.uint8,
+    )
     return cv2.LUT(enhanced, gamma_table)
 
 
-def expand_rect(rect: tuple[int, int, int, int], padding: int) -> tuple[int, int, int, int]:
+def expand_rect(
+    rect: tuple[int, int, int, int], padding: int
+) -> tuple[int, int, int, int]:
     left, top, right, bottom = rect
     return left - padding, top - padding, right + padding, bottom + padding
 
 
-def point_in_any_rect(point: tuple[int, int] | None, rects: list[tuple[int, int, int, int]]) -> bool:
+def point_in_any_rect(
+    point: tuple[int, int] | None, rects: list[tuple[int, int, int, int]]
+) -> bool:
     if point is None:
         return False
     return any(point_in_rect(point, rect) for rect in rects)
 
 
-def build_warning_text(ai_warning_text: str | None, voice_available: bool, last_error: str | None) -> str | None:
+def build_warning_text(
+    ai_warning_text: str | None, voice_available: bool, last_error: str | None
+) -> str | None:
     warning_parts = []
     if ai_warning_text:
         warning_parts.append("AI off")
@@ -148,32 +175,62 @@ class UIInteractionController:
         toolbar_items: list[ToolbarItem],
         palette_items: list[PaletteItem],
     ) -> str | None:
-        if hover_point is None or pinch_active or (interaction_mode == "draw_mode" and stroke_active):
+        if (
+            hover_point is None
+            or pinch_active
+            or (interaction_mode == "draw_mode" and stroke_active)
+        ):
             return None
 
         for item in toolbar_items:
-            if point_in_rect(hover_point, expand_rect(item["rect"], get_hover_padding(interaction_mode, "toolbar"))):
+            if point_in_rect(
+                hover_point,
+                expand_rect(
+                    item["rect"], get_hover_padding(interaction_mode, "toolbar")
+                ),
+            ):
                 return item["id"]
 
         for item in palette_items:
-            if point_in_rect(hover_point, expand_rect(item["rect"], get_hover_padding(interaction_mode, "palette"))):
+            if point_in_rect(
+                hover_point,
+                expand_rect(
+                    item["rect"], get_hover_padding(interaction_mode, "palette")
+                ),
+            ):
                 return item["id"]
 
         return None
 
-    def consume_hover(self, state: RuntimeState, hover_candidate: str | None, now: float) -> str | None:
+    def consume_hover(
+        self, state: RuntimeState, hover_candidate: str | None, now: float
+    ) -> str | None:
         if hover_candidate != state.hover_target_id:
             state.hover_target_id = hover_candidate
             state.hover_start_time = now if hover_candidate else None
             return None
 
-        required_dwell = config.UI_DRAW_MODE_DWELL_SECONDS if state.interaction_mode == "draw_mode" else DWELL_SECONDS
-        if hover_candidate and state.hover_start_time and now - state.hover_start_time >= required_dwell:
+        required_dwell = (
+            config.UI_DRAW_MODE_DWELL_SECONDS
+            if state.interaction_mode == "draw_mode"
+            else DWELL_SECONDS
+        )
+        if (
+            hover_candidate
+            and state.hover_start_time
+            and now - state.hover_start_time >= required_dwell
+        ):
             state.clear_hover()
             return hover_candidate
         return None
 
-    def apply_action(self, state: RuntimeState, action_id: str, callbacks: UIActionCallbacks, now: float) -> None:
+    def apply_action(
+        self,
+        state: RuntimeState,
+        action_id: str,
+        callbacks: UIActionCallbacks,
+        now: float,
+    ) -> None:
         if action_id.startswith("palette:"):
             color_name = action_id.split(":", 1)[1]
             if callbacks.set_brush_color(color_name):
@@ -218,11 +275,16 @@ class SpriteInteractionController:
             state.hovered_sprite_ref = None
             return
 
-        if state.delete_pending_expires_at is not None and now > state.delete_pending_expires_at:
+        if (
+            state.delete_pending_expires_at is not None
+            and now > state.delete_pending_expires_at
+        ):
             state.clear_delete_confirmation()
 
         hovered_sprite = get_topmost_sprite_near_point(sprites, hit_point, padding=22)
-        state.hovered_sprite_ref = id(hovered_sprite) if hovered_sprite is not None else None
+        state.hovered_sprite_ref = (
+            id(hovered_sprite) if hovered_sprite is not None else None
+        )
 
         thumbnail_target_sprite = None
         if pinch_started:
@@ -236,15 +298,33 @@ class SpriteInteractionController:
 
         dragging_sprite = next((sprite for sprite in sprites if sprite.dragging), None)
         active_pinch_sprite = next(
-            (sprite for sprite in sprites if id(sprite) == state.pinch_target_sprite_ref),
+            (
+                sprite
+                for sprite in sprites
+                if id(sprite) == state.pinch_target_sprite_ref
+            ),
             None,
         )
-        hover_sprite = get_topmost_sprite_near_point(sprites, hit_point, padding=SPRITE_HIT_PADDING)
-        pinch_target_sprite = thumbnail_target_sprite or dragging_sprite or active_pinch_sprite or hover_sprite
+        hover_sprite = get_topmost_sprite_near_point(
+            sprites, hit_point, padding=SPRITE_HIT_PADDING
+        )
+        pinch_target_sprite = (
+            thumbnail_target_sprite
+            or dragging_sprite
+            or active_pinch_sprite
+            or hover_sprite
+        )
 
         if pinch_started and pinch_target_sprite is not None:
             if state.delete_pending_sprite_ref == id(pinch_target_sprite):
-                remove_index = next((index for index, sprite in enumerate(sprites) if sprite is pinch_target_sprite), None)
+                remove_index = next(
+                    (
+                        index
+                        for index, sprite in enumerate(sprites)
+                        if sprite is pinch_target_sprite
+                    ),
+                    None,
+                )
                 if remove_index is not None:
                     sprites.pop(remove_index)
                     clear_sprite_selection(sprites)
@@ -254,27 +334,35 @@ class SpriteInteractionController:
                 state.set_status("Deleted sprite", now, 0.8)
                 return
 
-            if is_double_pinch(state.last_pinch_time, now, DOUBLE_PINCH_SECONDS) and state.last_pinched_sprite_ref == id(
-                pinch_target_sprite
-            ):
+            if is_double_pinch(
+                state.last_pinch_time, now, DOUBLE_PINCH_SECONDS
+            ) and state.last_pinched_sprite_ref == id(pinch_target_sprite):
                 state.delete_pending_sprite_ref = id(pinch_target_sprite)
                 state.delete_pending_expires_at = now + DELETE_CONFIRM_SECONDS
                 state.pinch_target_sprite_ref = None
                 state.pinch_started_at = None
-                state.set_status("Pinch once more to delete", now, DELETE_CONFIRM_SECONDS)
+                state.set_status(
+                    "Pinch once more to delete", now, DELETE_CONFIRM_SECONDS
+                )
                 return
 
             clear_sprite_selection(sprites)
             state.clear_delete_confirmation()
             pinch_target_sprite.selected = True
             bring_sprite_to_front(sprites, pinch_target_sprite)
-            pinch_target_sprite.drag_offset_x = max(0, min(pinch_target_sprite.w, hit_point[0] - pinch_target_sprite.x))
-            pinch_target_sprite.drag_offset_y = max(0, min(pinch_target_sprite.h, hit_point[1] - pinch_target_sprite.y))
+            pinch_target_sprite.drag_offset_x = max(
+                0, min(pinch_target_sprite.w, hit_point[0] - pinch_target_sprite.x)
+            )
+            pinch_target_sprite.drag_offset_y = max(
+                0, min(pinch_target_sprite.h, hit_point[1] - pinch_target_sprite.y)
+            )
             state.last_pinch_time = now
             state.last_pinched_sprite_ref = id(pinch_target_sprite)
             state.pinch_target_sprite_ref = id(pinch_target_sprite)
             state.pinch_started_at = now
-            state.set_status("Selected - hold pinch to drag", now, DRAG_CLUTCH_SECONDS + 0.45)
+            state.set_status(
+                "Selected - hold pinch to drag", now, DRAG_CLUTCH_SECONDS + 0.45
+            )
 
         if pinch_active and pinch_target_sprite is not None:
             if state.pinch_started_at is None:
@@ -286,16 +374,21 @@ class SpriteInteractionController:
             clear_sprite_selection(sprites)
             pinch_target_sprite.selected = True
             pinch_target_sprite.dragging = True
-            if pinch_target_sprite.drag_offset_x < 0 or pinch_target_sprite.drag_offset_y < 0:
+            if (
+                pinch_target_sprite.drag_offset_x < 0
+                or pinch_target_sprite.drag_offset_y < 0
+            ):
                 pinch_target_sprite.drag_offset_x = pinch_target_sprite.w // 2
                 pinch_target_sprite.drag_offset_y = pinch_target_sprite.h // 2
             target_x = current_point[0] - pinch_target_sprite.drag_offset_x
             target_y = current_point[1] - pinch_target_sprite.drag_offset_y
             pinch_target_sprite.x = int(
-                DRAG_SMOOTHING_PREV_WEIGHT * pinch_target_sprite.x + DRAG_SMOOTHING_NEW_WEIGHT * target_x
+                DRAG_SMOOTHING_PREV_WEIGHT * pinch_target_sprite.x
+                + DRAG_SMOOTHING_NEW_WEIGHT * target_x
             )
             pinch_target_sprite.y = int(
-                DRAG_SMOOTHING_PREV_WEIGHT * pinch_target_sprite.y + DRAG_SMOOTHING_NEW_WEIGHT * target_y
+                DRAG_SMOOTHING_PREV_WEIGHT * pinch_target_sprite.y
+                + DRAG_SMOOTHING_NEW_WEIGHT * target_y
             )
             pinch_target_sprite.clamp_to_frame(frame_width, frame_height)
             state.set_status("Dragging - release to place", now, 0.35)
@@ -307,7 +400,9 @@ class SpriteInteractionController:
 
 
 class DrawingInteractionController:
-    def _toggle_test_palette_color(self, state: RuntimeState, drawing_canvas: DrawingCanvas, now: float) -> None:
+    def _toggle_test_palette_color(
+        self, state: RuntimeState, drawing_canvas: DrawingCanvas, now: float
+    ) -> None:
         if not config.TEST_PALETTE_ORDER:
             return
 
@@ -316,7 +411,9 @@ class DrawingInteractionController:
 
         if state.color_toggle_hold_started_at is None:
             state.color_toggle_hold_started_at = now
-            state.set_status("Hold pinch to switch color", now, COLOR_TOGGLE_GESTURE_SECONDS)
+            state.set_status(
+                "Hold pinch to switch color", now, COLOR_TOGGLE_GESTURE_SECONDS
+            )
             return
 
         if now - state.color_toggle_hold_started_at < COLOR_TOGGLE_GESTURE_SECONDS:
@@ -327,7 +424,9 @@ class DrawingInteractionController:
             next_color = config.TEST_PALETTE_ORDER[0]
         else:
             index = config.TEST_PALETTE_ORDER.index(current)
-            next_color = config.TEST_PALETTE_ORDER[(index + 1) % len(config.TEST_PALETTE_ORDER)]
+            next_color = config.TEST_PALETTE_ORDER[
+                (index + 1) % len(config.TEST_PALETTE_ORDER)
+            ]
 
         next_color_value = config.get_brush_color(next_color)
         if next_color_value is None:
@@ -356,7 +455,9 @@ class DrawingInteractionController:
         stroke_active = state.stroke_active()
         pointer_over_ui = point_in_any_rect(raw_fingertip or current_point, ui_rects)
         actively_triggering_ui = state.hover_target_id is not None
-        drawing_blocked_by_ui = (not stroke_active) and (actively_triggering_ui or pointer_over_ui)
+        drawing_blocked_by_ui = (not stroke_active) and (
+            actively_triggering_ui or pointer_over_ui
+        )
 
         if is_closed_fist(hand_landmarks):
             if state.fist_start_time is None:
@@ -364,7 +465,9 @@ class DrawingInteractionController:
                 state.set_status("Hold fist to create sprite", now, FINISH_HOLD_SECONDS)
             elif now - state.fist_start_time >= FINISH_HOLD_SECONDS:
                 drawing_canvas.reset_stroke()
-                next_z_index = max((sprite.z_index for sprite in sprites), default=-1) + 1
+                next_z_index = (
+                    max((sprite.z_index for sprite in sprites), default=-1) + 1
+                )
                 sprite = create_sprite_from_canvas(drawing_canvas.canvas, next_z_index)
                 if sprite is not None:
                     clear_sprite_selection(sprites)
@@ -383,12 +486,9 @@ class DrawingInteractionController:
         if draw_pose_active:
             state.last_draw_pose_time = now
 
-        draw_pose_with_grace = (
-            draw_pose_active
-            or (
-                state.last_draw_pose_time is not None
-                and now - state.last_draw_pose_time <= DRAW_POSE_GRACE_SECONDS
-            )
+        draw_pose_with_grace = draw_pose_active or (
+            state.last_draw_pose_time is not None
+            and now - state.last_draw_pose_time <= DRAW_POSE_GRACE_SECONDS
         )
 
         if pinch_active and not stroke_active and not drawing_blocked_by_ui:
@@ -397,7 +497,12 @@ class DrawingInteractionController:
         if not pinch_active:
             state.clear_color_toggle()
 
-        if draw_pose_with_grace and current_point is not None and not pinch_active and not drawing_blocked_by_ui:
+        if (
+            draw_pose_with_grace
+            and current_point is not None
+            and not pinch_active
+            and not drawing_blocked_by_ui
+        ):
             state.status_text = STATUS_DRAWING
             if state.prev_draw_point is not None:
                 movement_px = math.hypot(
@@ -409,12 +514,15 @@ class DrawingInteractionController:
                         interpolate_segment(
                             state.prev_draw_point,
                             current_point,
-                            max(1, int(round(scaled_max_segment_step_px))),
+                            max(1, round(scaled_max_segment_step_px)),
                         )
                     )
                     state.prev_draw_point = current_point
             else:
-                state.prev_smoothed_point = (float(current_point[0]), float(current_point[1]))
+                state.prev_smoothed_point = (
+                    float(current_point[0]),
+                    float(current_point[1]),
+                )
                 drawing_canvas.add_segment(current_point, current_point)
                 state.prev_draw_point = current_point
         elif is_index_and_middle_up(hand_landmarks):

@@ -5,7 +5,6 @@ import hashlib
 import logging
 import os
 import time
-from typing import Optional
 
 import cv2
 import numpy as np
@@ -15,8 +14,10 @@ from ..config import GEMINI_CACHE_SECONDS
 try:
     from dotenv import load_dotenv
 except ImportError:  # pragma: no cover - optional dependency
+
     def load_dotenv() -> bool:
         return False
+
 
 try:
     from google import genai as google_genai
@@ -40,7 +41,7 @@ _CACHE = {
 }
 
 
-def frame_to_base64_png(frame: np.ndarray) -> Optional[str]:
+def frame_to_base64_png(frame: np.ndarray) -> str | None:
     success, encoded = cv2.imencode(".png", frame)
     if not success:
         return None
@@ -62,7 +63,9 @@ def describe_image_with_gemini(frame: np.ndarray, prompt: str) -> str:
         return "Gemini vision is unavailable because the API key is missing."
 
     if google_genai is None and legacy_genai is None:
-        return "Gemini vision is unavailable because no supported Gemini SDK is installed."
+        return (
+            "Gemini vision is unavailable because no supported Gemini SDK is installed."
+        )
 
     encoded_image = frame_to_base64_png(frame)
     if encoded_image is None:
@@ -109,7 +112,7 @@ def describe_image_with_gemini(frame: np.ndarray, prompt: str) -> str:
                 ]
             )
             text = getattr(response, "text", "") or ""
-    except Exception as exc:  # pragma: no cover - network/API behavior
+    except Exception as exc:  # noqa: BLE001 - external network/API boundary
         logger.warning("Gemini image description failed: %s", exc)
         return f"I could not analyze the image right now: {exc}"
 

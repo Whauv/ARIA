@@ -4,8 +4,8 @@ import logging
 import os
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable, Optional
 
 import numpy as np
 
@@ -16,8 +16,10 @@ from .command_intents import CommandIntent, parse_command
 try:
     from dotenv import load_dotenv
 except ImportError:  # pragma: no cover - optional dependency
+
     def load_dotenv() -> bool:
         return False
+
 
 try:
     import openwakeword
@@ -42,7 +44,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class JarvisContext:
-    get_current_frame: Callable[[], Optional[np.ndarray]]
+    get_current_frame: Callable[[], np.ndarray | None]
     clear_canvas: Callable[[], None]
     delete_selected_sprite: Callable[[], bool]
     scale_selected_sprite: Callable[[float], bool]
@@ -65,7 +67,9 @@ def command_handler(command: str, context: JarvisContext) -> str:
         )
 
     if parsed_command.intent == CommandIntent.CHANGE_BRUSH_COLOR:
-        if parsed_command.color_name and context.set_brush_color(parsed_command.color_name):
+        if parsed_command.color_name and context.set_brush_color(
+            parsed_command.color_name
+        ):
             return f"Changed the brush color to {parsed_command.color_name}."
         supported = ", ".join(sorted(config.BRUSH_COLORS))
         return f"I do not know that color yet. Try one of: {supported}."
@@ -79,12 +83,20 @@ def command_handler(command: str, context: JarvisContext) -> str:
             return "Removed the selected sprite."
         return "There is no selected sprite to remove."
 
-    if parsed_command.intent == CommandIntent.SCALE_SELECTION and parsed_command.scale_factor and parsed_command.scale_factor > 1.0:
+    if (
+        parsed_command.intent == CommandIntent.SCALE_SELECTION
+        and parsed_command.scale_factor
+        and parsed_command.scale_factor > 1.0
+    ):
         if context.scale_selected_sprite(parsed_command.scale_factor):
             return "Made the selected sprite bigger."
         return "Select a sprite first."
 
-    if parsed_command.intent == CommandIntent.SCALE_SELECTION and parsed_command.scale_factor and parsed_command.scale_factor < 1.0:
+    if (
+        parsed_command.intent == CommandIntent.SCALE_SELECTION
+        and parsed_command.scale_factor
+        and parsed_command.scale_factor < 1.0
+    ):
         if context.scale_selected_sprite(parsed_command.scale_factor):
             return "Made the selected sprite smaller."
         return "Select a sprite first."
@@ -118,7 +130,9 @@ class JarvisAssistant:
         self.stop_event = threading.Event()
         self.voice_available = True
         self.last_error: str | None = None
-        self.thread = threading.Thread(target=self._run_loop, daemon=True, name="aria-jarvis")
+        self.thread = threading.Thread(
+            target=self._run_loop, daemon=True, name="aria-jarvis"
+        )
 
     def start(self) -> None:
         self.thread.start()
@@ -131,7 +145,9 @@ class JarvisAssistant:
     def _run_loop(self) -> None:
         if openwakeword is None or Model is None or sr is None:
             self.voice_available = False
-            self.last_error = "Voice disabled: missing openWakeWord or SpeechRecognition dependency."
+            self.last_error = (
+                "Voice disabled: missing openWakeWord or SpeechRecognition dependency."
+            )
             return
 
         wakeword_model_path = os.getenv("OPENWAKEWORD_MODEL_PATH")
@@ -141,34 +157,48 @@ class JarvisAssistant:
         try:
             if wakeword_model_path:
                 wake_model = Model(wakeword_models=[wakeword_model_path])
-                wakeword_key = os.path.splitext(os.path.basename(wakeword_model_path))[0]
+                wakeword_key = os.path.splitext(os.path.basename(wakeword_model_path))[
+                    0
+                ]
             else:
                 try:
                     openwakeword.utils.download_models()
-                except Exception as exc:  # pragma: no cover - environment dependent
-                    logger.warning("openWakeWord model download failed, using local cache if present: %s", exc)
+                except Exception as exc:  # noqa: BLE001 - optional model download
+                    logger.warning(
+                        "openWakeWord model download failed, using local cache if present: %s",
+                        exc,
+                    )
                 wake_model = Model()
                 wakeword_key = built_in_wakeword
 
             recognizer = sr.Recognizer()
             try:
                 with sr.Microphone(sample_rate=config.VOICE_SAMPLE_RATE) as source:
-                    recognizer.adjust_for_ambient_noise(source, duration=config.VOICE_WAKEWORD_CALIBRATION_SECONDS)
-                    chunk_size = int(config.VOICE_SAMPLE_RATE * config.VOICE_CHUNK_SECONDS) * 2
+                    recognizer.adjust_for_ambient_noise(
+                        source, duration=config.VOICE_WAKEWORD_CALIBRATION_SECONDS
+                    )
+                    chunk_size = (
+                        int(config.VOICE_SAMPLE_RATE * config.VOICE_CHUNK_SECONDS) * 2
+                    )
 
                     while not self.stop_event.is_set():
-                        audio_chunk = source.stream.read(chunk_size, exception_on_overflow=False)
+                        audio_chunk = source.stream.read(
+                            chunk_size, exception_on_overflow=False
+                        )
                         pcm = np.frombuffer(audio_chunk, dtype=np.int16)
                         prediction = wake_model.predict(pcm)
-                        if prediction.get(wakeword_key, 0.0) >= config.OPENWAKEWORD_THRESHOLD:
+                        if (
+                            prediction.get(wakeword_key, 0.0)
+                            >= config.OPENWAKEWORD_THRESHOLD
+                        ):
                             self._handle_wake_word()
                             time.sleep(config.VOICE_WAKEWORD_COOLDOWN_SECONDS)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - microphone/backend boundary
                 self.voice_available = False
                 self.last_error = f"Voice disabled: {exc}"
                 logger.warning("Voice input loop disabled: %s", exc)
                 return
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - voice initialization boundary
             self.voice_available = False
             self.last_error = f"Voice disabled: {exc}"
             logger.warning("Voice initialization disabled: %s", exc)
@@ -190,7 +220,7 @@ class JarvisAssistant:
         finally:
             self.listening_event.clear()
 
-    def _capture_command(self) -> Optional[str]:
+    def _capture_command(self) -> str | None:
         if sr is None:
             return None
         if not config.ALLOW_CLOUD_SPEECH_RECOGNITION:
@@ -201,7 +231,9 @@ class JarvisAssistant:
         recognizer = sr.Recognizer()
         try:
             with sr.Microphone() as source:
-                recognizer.adjust_for_ambient_noise(source, duration=config.VOICE_AMBIENT_CALIBRATION_SECONDS)
+                recognizer.adjust_for_ambient_noise(
+                    source, duration=config.VOICE_AMBIENT_CALIBRATION_SECONDS
+                )
                 audio = recognizer.listen(
                     source,
                     timeout=config.VOICE_COMMAND_TIMEOUT_SECONDS,
@@ -218,13 +250,15 @@ class JarvisAssistant:
             self.last_error = f"Speech recognition request failed: {exc}"
             logger.warning("Speech recognition request failed: %s", exc)
             return None
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - speech backend boundary
             self.last_error = f"Voice capture failed: {exc}"
             logger.warning("Voice capture failed: %s", exc)
             return None
 
     def _speak_async(self, text: str) -> None:
-        threading.Thread(target=self._speak, args=(text,), daemon=True, name="aria-tts").start()
+        threading.Thread(
+            target=self._speak, args=(text,), daemon=True, name="aria-tts"
+        ).start()
 
     def _speak(self, text: str) -> None:
         self.speaking_event.set()
@@ -245,6 +279,6 @@ class JarvisAssistant:
             engine.say(text)
             engine.runAndWait()
             engine.stop()
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - TTS backend boundary
             logger.warning("TTS synthesis failed: %s", exc)
             return
