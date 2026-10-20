@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+import itertools
 import math
-from typing import Optional
 
 import cv2
 import numpy as np
@@ -28,7 +28,9 @@ class DrawingCanvas:
         self.strokes: list[dict[str, object]] = []
         self.undo_stack: list[np.ndarray] = [self.canvas.copy()]
         self._current_stroke: list[tuple[int, int]] = []
-        self.brush_color = config.get_brush_color(config.DEFAULT_BRUSH_NAME) or config.DRAW_COLOR
+        self.brush_color = (
+            config.get_brush_color(config.DEFAULT_BRUSH_NAME) or config.DRAW_COLOR
+        )
 
     def set_brush_color(self, color: tuple[int, int, int]) -> None:
         self.brush_color = color
@@ -38,7 +40,7 @@ class DrawingCanvas:
         for stroke_data in self.strokes:
             points = stroke_data["points"]
             color = stroke_data["color"]
-            for start, end in zip(points, points[1:]):
+            for start, end in itertools.pairwise(points):
                 cv2.line(self.canvas, start, end, color, LINE_THICKNESS)
 
     def _push_snapshot(self) -> None:
@@ -78,7 +80,7 @@ class DrawingCanvas:
             self.add_segment(points[0], points[0])
             return
 
-        for start, end in zip(points, points[1:]):
+        for start, end in itertools.pairwise(points):
             self.add_segment(start, end)
 
     def clear(self) -> None:
@@ -105,12 +107,14 @@ class DrawingCanvas:
 
     def overlay_on(self, frame: np.ndarray, alpha: float) -> np.ndarray:
         if not hasattr(cv2, "addWeighted"):
-            return np.where(self.canvas > 0, self.canvas, frame).astype(frame.dtype, copy=False)
+            return np.where(self.canvas > 0, self.canvas, frame).astype(
+                frame.dtype, copy=False
+            )
         return cv2.addWeighted(frame, 1.0, self.canvas, alpha, 0.0)
 
 
 def smooth_point(
-    prev_point: Optional[tuple[float, float]],
+    prev_point: tuple[float, float] | None,
     new_point: tuple[int, int],
     prev_weight: float,
     new_weight: float,
@@ -135,12 +139,12 @@ def interpolate_segment(
     if distance <= max_step_px:
         return [start, end]
 
-    steps = max(1, int(math.ceil(distance / max_step_px)))
+    steps = max(1, math.ceil(distance / max_step_px))
     points = [start]
     for step_index in range(1, steps):
         ratio = step_index / steps
-        x = int(round(start[0] + (end[0] - start[0]) * ratio))
-        y = int(round(start[1] + (end[1] - start[1]) * ratio))
+        x = round(start[0] + (end[0] - start[0]) * ratio)
+        y = round(start[1] + (end[1] - start[1]) * ratio)
         interpolated = (x, y)
         if interpolated != points[-1]:
             points.append(interpolated)
@@ -150,7 +154,7 @@ def interpolate_segment(
 
 
 def adaptive_smooth_point(
-    prev_point: Optional[tuple[float, float]],
+    prev_point: tuple[float, float] | None,
     new_point: tuple[int, int],
     distance: float,
     slow_distance_px: float = SMOOTHING_SLOW_DISTANCE_PX,
@@ -168,7 +172,9 @@ def adaptive_smooth_point(
     elif distance >= fast_distance_px:
         prev_weight, new_weight = fast_prev_weight, fast_new_weight
     else:
-        ratio = (distance - slow_distance_px) / max(1e-6, fast_distance_px - slow_distance_px)
+        ratio = (distance - slow_distance_px) / max(
+            1e-6, fast_distance_px - slow_distance_px
+        )
         prev_weight = slow_prev_weight + (fast_prev_weight - slow_prev_weight) * ratio
         new_weight = slow_new_weight + (fast_new_weight - slow_new_weight) * ratio
 

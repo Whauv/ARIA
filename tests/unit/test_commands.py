@@ -34,7 +34,9 @@ class CommandHandlerTests(unittest.TestCase):
             undo_last_stroke=lambda: True,
             save_snapshot=lambda path: True,
             set_brush_color=lambda color_name: color_name == "red",
-            set_interaction_mode=lambda mode_name: mode_name in {"draw_mode", "select_mode"},
+            set_interaction_mode=lambda mode_name: (
+                mode_name in {"draw_mode", "select_mode"}
+            ),
         )
 
     def test_command_handler_routes_palette_change(self) -> None:

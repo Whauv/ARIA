@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Iterable, TypedDict
+from collections.abc import Iterable
+from typing import TypedDict
 
 import cv2
 import numpy as np
@@ -14,8 +15,8 @@ from ..config import (
     ERASER_COLOR,
     FPS_COLOR,
     PALETTE_ORDER,
-    TEST_PALETTE_ORDER,
     PANEL_BG_COLOR,
+    TEST_PALETTE_ORDER,
     THUMBNAIL_BORDER_COLOR,
     THUMBNAIL_WIDTH,
     TOOLBAR_ACTIONS,
@@ -52,7 +53,11 @@ class ThumbnailItem(TypedDict):
 
 
 def get_hover_padding(interaction_mode: str, target_kind: str) -> int:
-    base_padding = UI_DRAW_MODE_PADDING if interaction_mode == "draw_mode" else UI_SELECT_MODE_PADDING
+    base_padding = (
+        UI_DRAW_MODE_PADDING
+        if interaction_mode == "draw_mode"
+        else UI_SELECT_MODE_PADDING
+    )
     if target_kind == "toolbar":
         return base_padding + 8
     if target_kind == "palette":
@@ -60,7 +65,12 @@ def get_hover_padding(interaction_mode: str, target_kind: str) -> int:
     return base_padding
 
 
-def _draw_panel(frame: np.ndarray, rect: tuple[int, int, int, int], color: tuple[int, int, int], alpha: float) -> None:
+def _draw_panel(
+    frame: np.ndarray,
+    rect: tuple[int, int, int, int],
+    color: tuple[int, int, int],
+    alpha: float,
+) -> None:
     left, top, right, bottom = rect
     overlay = frame.copy()
     cv2.rectangle(overlay, (left, top), (right, bottom), color, -1)
@@ -89,24 +99,43 @@ def get_palette_items(frame_width: int) -> list[PaletteItem]:
     return items
 
 
-def draw_palette(frame: np.ndarray, items: list[PaletteItem], active_color_name: str, hover_target_id: str | None, dwell_ratio: float) -> None:
+def draw_palette(
+    frame: np.ndarray,
+    items: list[PaletteItem],
+    active_color_name: str,
+    hover_target_id: str | None,
+    dwell_ratio: float,
+) -> None:
     if not items:
         return
 
     first_left, first_top, _, _ = items[0]["rect"]
     _, _, last_right, last_bottom = items[-1]["rect"]
-    _draw_panel(frame, (first_left - 8, first_top - 8, last_right + 8, last_bottom + 8), PANEL_BG_COLOR, 0.4)
+    _draw_panel(
+        frame,
+        (first_left - 8, first_top - 8, last_right + 8, last_bottom + 8),
+        PANEL_BG_COLOR,
+        0.4,
+    )
     for item in items:
         left, top, right, bottom = item["rect"]
         color_name = item["color_name"]
         fill_color = ERASER_COLOR if color_name == "eraser" else item["preview_color"]
-        background = BUTTON_ACTIVE_COLOR if color_name == active_color_name else (38, 42, 54)
+        background = (
+            BUTTON_ACTIVE_COLOR if color_name == active_color_name else (38, 42, 54)
+        )
         cv2.rectangle(frame, (left, top), (right, bottom), background, -1)
         swatch_left = left + 8
         swatch_right = left + 34
         swatch_top = top + 5
         swatch_bottom = bottom - 5
-        cv2.rectangle(frame, (swatch_left, swatch_top), (swatch_right, swatch_bottom), fill_color, -1)
+        cv2.rectangle(
+            frame,
+            (swatch_left, swatch_top),
+            (swatch_right, swatch_bottom),
+            fill_color,
+            -1,
+        )
         cv2.putText(
             frame,
             item["label"],
@@ -119,7 +148,13 @@ def draw_palette(frame: np.ndarray, items: list[PaletteItem], active_color_name:
         )
         if hover_target_id == item["id"]:
             progress_width = int((right - left) * dwell_ratio)
-            cv2.rectangle(frame, (left, bottom - 4), (left + progress_width, bottom), BUTTON_HOVER_COLOR, -1)
+            cv2.rectangle(
+                frame,
+                (left, bottom - 4),
+                (left + progress_width, bottom),
+                BUTTON_HOVER_COLOR,
+                -1,
+            )
 
 
 def get_toolbar_items(frame_width: int, frame_height: int) -> list[ToolbarItem]:
@@ -127,11 +162,23 @@ def get_toolbar_items(frame_width: int, frame_height: int) -> list[ToolbarItem]:
     side_margin = 16
     spacing = 10
     available_width = max(320, frame_width - side_margin * 2)
-    button_width = max(100, (available_width - (len(TOOLBAR_ACTIONS) - 1) * spacing) // len(TOOLBAR_ACTIONS))
-    total_width = len(TOOLBAR_ACTIONS) * button_width + (len(TOOLBAR_ACTIONS) - 1) * spacing
+    button_width = max(
+        100,
+        (available_width - (len(TOOLBAR_ACTIONS) - 1) * spacing)
+        // len(TOOLBAR_ACTIONS),
+    )
+    total_width = (
+        len(TOOLBAR_ACTIONS) * button_width + (len(TOOLBAR_ACTIONS) - 1) * spacing
+    )
     if total_width > available_width:
-        button_width = max(88, (available_width - (len(TOOLBAR_ACTIONS) - 1) * spacing) // len(TOOLBAR_ACTIONS))
-        total_width = len(TOOLBAR_ACTIONS) * button_width + (len(TOOLBAR_ACTIONS) - 1) * spacing
+        button_width = max(
+            88,
+            (available_width - (len(TOOLBAR_ACTIONS) - 1) * spacing)
+            // len(TOOLBAR_ACTIONS),
+        )
+        total_width = (
+            len(TOOLBAR_ACTIONS) * button_width + (len(TOOLBAR_ACTIONS) - 1) * spacing
+        )
     start_x = max(side_margin, (frame_width - total_width) // 2)
     top = frame_height - TOOLBAR_HEIGHT + 14
     bottom = frame_height - 12
@@ -150,15 +197,28 @@ def get_toolbar_items(frame_width: int, frame_height: int) -> list[ToolbarItem]:
     return items
 
 
-def draw_toolbar(frame: np.ndarray, items: list[ToolbarItem], active_action: str, hover_target_id: str | None, dwell_ratio: float) -> None:
+def draw_toolbar(
+    frame: np.ndarray,
+    items: list[ToolbarItem],
+    active_action: str,
+    hover_target_id: str | None,
+    dwell_ratio: float,
+) -> None:
     if not items:
         return
 
     top = frame.shape[0] - TOOLBAR_HEIGHT
-    _draw_panel(frame, (12, top - 4, frame.shape[1] - 12, frame.shape[0] - 8), TOOLBAR_BG_COLOR, 0.46)
+    _draw_panel(
+        frame,
+        (12, top - 4, frame.shape[1] - 12, frame.shape[0] - 8),
+        TOOLBAR_BG_COLOR,
+        0.46,
+    )
     for item in items:
         left, item_top, right, bottom = item["rect"]
-        background = BUTTON_ACTIVE_COLOR if item["action"] == active_action else (38, 42, 54)
+        background = (
+            BUTTON_ACTIVE_COLOR if item["action"] == active_action else (38, 42, 54)
+        )
         cv2.rectangle(frame, (left, item_top), (right, bottom), background, -1)
         text_scale = 0.52 if (right - left) < 120 else 0.58
         text_x = left + 10 if (right - left) < 120 else left + 12
@@ -174,30 +234,54 @@ def draw_toolbar(frame: np.ndarray, items: list[ToolbarItem], active_action: str
         )
         if hover_target_id == item["id"]:
             progress_width = int((right - left) * dwell_ratio)
-            cv2.rectangle(frame, (left, bottom - 4), (left + progress_width, bottom), BUTTON_HOVER_COLOR, -1)
+            cv2.rectangle(
+                frame,
+                (left, bottom - 4),
+                (left + progress_width, bottom),
+                BUTTON_HOVER_COLOR,
+                -1,
+            )
 
 
 def get_thumbnail_items(frame: np.ndarray, sprites: Iterable) -> list[ThumbnailItem]:
     items: list[ThumbnailItem] = []
     x1 = frame.shape[1] - THUMBNAIL_WIDTH
     y = 104
-    for index, sprite in enumerate(sorted(sprites, key=lambda item: item.z_index, reverse=True)):
+    for index, sprite in enumerate(
+        sorted(sprites, key=lambda item: item.z_index, reverse=True)
+    ):
         rect = (x1, y, frame.shape[1] - 12, y + 52)
         items.append({"id": f"thumb:{id(sprite)}", "rect": rect, "sprite": sprite})
         y += 58
     return items
 
 
-def draw_thumbnail_strip(frame: np.ndarray, items: list[ThumbnailItem], hover_target_id: str | None) -> None:
+def draw_thumbnail_strip(
+    frame: np.ndarray, items: list[ThumbnailItem], hover_target_id: str | None
+) -> None:
     if not items:
         return
 
-    _draw_panel(frame, (frame.shape[1] - THUMBNAIL_WIDTH - 8, 98, frame.shape[1] - 8, frame.shape[0] - TOOLBAR_HEIGHT - 12), PANEL_BG_COLOR, 0.2)
+    _draw_panel(
+        frame,
+        (
+            frame.shape[1] - THUMBNAIL_WIDTH - 8,
+            98,
+            frame.shape[1] - 8,
+            frame.shape[0] - TOOLBAR_HEIGHT - 12,
+        ),
+        PANEL_BG_COLOR,
+        0.2,
+    )
     for item in items:
         left, top, right, bottom = item["rect"]
         sprite = item["sprite"]
         cv2.rectangle(frame, (left, top), (right, bottom), THUMBNAIL_BORDER_COLOR, 1)
-        thumb = cv2.resize(sprite.img[:, :, :3], (right - left - 8, bottom - top - 8), interpolation=cv2.INTER_AREA)
+        thumb = cv2.resize(
+            sprite.img[:, :, :3],
+            (right - left - 8, bottom - top - 8),
+            interpolation=cv2.INTER_AREA,
+        )
         frame[top + 4 : bottom - 4, left + 4 : right - 4] = thumb
         if sprite.selected:
             cv2.rectangle(frame, (left, top), (right, bottom), BUTTON_ACTIVE_COLOR, 2)
@@ -205,7 +289,12 @@ def draw_thumbnail_strip(frame: np.ndarray, items: list[ThumbnailItem], hover_ta
             cv2.rectangle(frame, (left, top), (right, bottom), BUTTON_HOVER_COLOR, 2)
 
 
-def draw_brush_preview(frame: np.ndarray, fingertip: tuple[int, int] | None, brush_size: int, brush_color: tuple[int, int, int]) -> None:
+def draw_brush_preview(
+    frame: np.ndarray,
+    fingertip: tuple[int, int] | None,
+    brush_size: int,
+    brush_color: tuple[int, int, int],
+) -> None:
     if fingertip is None:
         return
 
@@ -214,7 +303,9 @@ def draw_brush_preview(frame: np.ndarray, fingertip: tuple[int, int] | None, bru
     cv2.circle(frame, center, radius, brush_color, 2)
 
 
-def draw_fingertip_marker(frame: np.ndarray, fingertip: tuple[int, int] | None, tracking_stability: float) -> None:
+def draw_fingertip_marker(
+    frame: np.ndarray, fingertip: tuple[int, int] | None, tracking_stability: float
+) -> None:
     if fingertip is None:
         return
 
@@ -227,6 +318,66 @@ def draw_fingertip_marker(frame: np.ndarray, fingertip: tuple[int, int] | None, 
 
     cv2.circle(frame, fingertip, 6, color, -1)
     cv2.circle(frame, fingertip, 10, color, 1)
+
+
+def draw_gesture_progress(
+    frame: np.ndarray,
+    center: tuple[int, int] | None,
+    progress: float,
+    label: str,
+    color: tuple[int, int, int] = (80, 220, 255),
+) -> None:
+    if center is None:
+        return
+
+    progress = max(0.0, min(1.0, progress))
+    radius = 22
+    cv2.circle(frame, center, radius, (60, 70, 80), 1, cv2.LINE_AA)
+    cv2.ellipse(
+        frame,
+        center,
+        (radius, radius),
+        -90,
+        0,
+        int(progress * 360),
+        color,
+        3,
+        cv2.LINE_AA,
+    )
+    text_origin = (center[0] + 28, max(20, center[1] - 24))
+    cv2.putText(
+        frame, label, text_origin, cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1, cv2.LINE_AA
+    )
+
+
+def draw_resize_anchor(
+    frame: np.ndarray,
+    first_point: tuple[int, int] | None,
+    second_point: tuple[int, int] | None,
+    scale_factor: float | None,
+) -> None:
+    if first_point is None or second_point is None:
+        return
+
+    color = (80, 255, 120)
+    cv2.line(frame, first_point, second_point, color, 2, cv2.LINE_AA)
+    cv2.circle(frame, first_point, 8, color, 2, cv2.LINE_AA)
+    cv2.circle(frame, second_point, 8, color, 2, cv2.LINE_AA)
+    midpoint = (
+        (first_point[0] + second_point[0]) // 2,
+        (first_point[1] + second_point[1]) // 2,
+    )
+    label = "Resize" if scale_factor is None else f"Resize {scale_factor:.2f}x"
+    cv2.putText(
+        frame,
+        label,
+        (midpoint[0] + 10, midpoint[1] - 10),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.5,
+        color,
+        1,
+        cv2.LINE_AA,
+    )
 
 
 def draw_fps(frame: np.ndarray, fps: float) -> None:
@@ -266,7 +417,12 @@ def draw_warning_overlay(frame: np.ndarray, warning_text: str | None) -> None:
     )
 
 
-def draw_tracking_feedback(frame: np.ndarray, calibrated: bool, tracking_stability: float, tracking_status_text: str) -> None:
+def draw_tracking_feedback(
+    frame: np.ndarray,
+    calibrated: bool,
+    tracking_stability: float,
+    tracking_status_text: str,
+) -> None:
     if not calibrated:
         text = "Calibrating hand..."
         color = (255, 220, 140)

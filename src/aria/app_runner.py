@@ -4,8 +4,8 @@ import logging
 import math
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable
 
 import cv2
 import numpy as np
@@ -21,6 +21,7 @@ from .config import (
     MODE_BG_COLOR,
     PINCH_RELEASE_DISTANCE,
     PINCH_START_DISTANCE,
+    RESIZE_CLUTCH_SECONDS,
     STATUS_BG_COLOR,
     STATUS_COLOR,
     STATUS_IDLE,
@@ -31,7 +32,12 @@ from .config import (
     TRACKING_UNSTABLE_THRESHOLD,
 )
 from .drawing.canvas import DrawingCanvas, adaptive_smooth_point
-from .drawing.sprite import draw_sprite_selection, overlay_sprite
+from .drawing.sprite import (
+    draw_sprite_candidate,
+    draw_sprite_delete_confirmation,
+    draw_sprite_selection,
+    overlay_sprite,
+)
 from .runtime.controllers import (
     DrawingInteractionController,
     SpriteInteractionController,
@@ -61,10 +67,12 @@ from .ui.ui import (
     draw_brush_preview,
     draw_fingertip_marker,
     draw_fps,
+    draw_gesture_progress,
     draw_palette,
-    draw_tracking_feedback,
+    draw_resize_anchor,
     draw_thumbnail_strip,
     draw_toolbar,
+    draw_tracking_feedback,
     draw_warning_overlay,
     get_palette_items,
     get_thumbnail_items,
@@ -72,11 +80,11 @@ from .ui.ui import (
 )
 from .vision.gestures import (
     dwell_progress,
+    estimate_hand_spread,
     get_fingertip_distance,
     get_index_fingertip,
     get_landmark_point,
     is_pinching,
-    estimate_hand_spread,
     is_two_hand_resize,
 )
 
@@ -145,10 +153,30 @@ def draw_voice_indicator(frame, listening: bool, speaking: bool) -> None:
         return
 
     cv2.circle(frame, center, 9, config.VOICE_IDLE_COLOR, 1)
-    cv2.line(frame, (center[0], center[1] - 5), (center[0], center[1] + 4), config.VOICE_IDLE_COLOR, 2)
-    cv2.ellipse(frame, (center[0], center[1] - 1), (4, 6), 0, 0, 360, config.VOICE_IDLE_COLOR, 2)
-    cv2.line(frame, (center[0], center[1] + 8), (center[0], center[1] + 12), config.VOICE_IDLE_COLOR, 2)
-    cv2.line(frame, (center[0] - 4, center[1] + 12), (center[0] + 4, center[1] + 12), config.VOICE_IDLE_COLOR, 2)
+    cv2.line(
+        frame,
+        (center[0], center[1] - 5),
+        (center[0], center[1] + 4),
+        config.VOICE_IDLE_COLOR,
+        2,
+    )
+    cv2.ellipse(
+        frame, (center[0], center[1] - 1), (4, 6), 0, 0, 360, config.VOICE_IDLE_COLOR, 2
+    )
+    cv2.line(
+        frame,
+        (center[0], center[1] + 8),
+        (center[0], center[1] + 12),
+        config.VOICE_IDLE_COLOR,
+        2,
+    )
+    cv2.line(
+        frame,
+        (center[0] - 4, center[1] + 12),
+        (center[0] + 4, center[1] + 12),
+        config.VOICE_IDLE_COLOR,
+        2,
+    )
 
 
 def draw_mode_indicator(frame, mode_text: str) -> None:
@@ -252,7 +280,10 @@ class AppRunner:
             if selected is None:
                 return False
             selected.scale_by_factor(scale_factor)
-            selected.clamp_to_frame(self.state.frame_dimensions["width"], self.state.frame_dimensions["height"])
+            selected.clamp_to_frame(
+                self.state.frame_dimensions["width"],
+                self.state.frame_dimensions["height"],
+            )
             return True
 
     def undo_last_stroke(self) -> bool:
@@ -280,17 +311,28 @@ class AppRunner:
         if mode_name not in {"draw_mode", "select_mode"}:
             return False
         self.state.interaction_mode = mode_name
+        self.state.clear_resize_clutch()
         self.state.reset_interaction_transients()
         if self.drawing_canvas is not None:
             with self.canvas_lock:
                 self.drawing_canvas.reset_stroke()
-        self.state.set_status("Draw Mode" if mode_name == "draw_mode" else "Select Mode", time.time(), 0.9)
+        self.state.set_status(
+            "Draw Mode" if mode_name == "draw_mode" else "Select Mode", time.time(), 0.9
+        )
         return True
 
     def _show_webcam_error(self) -> None:
         error_frame = np.zeros((220, 720, 3), dtype=np.uint8)
         if hasattr(cv2, "putText") and hasattr(cv2, "FONT_HERSHEY_SIMPLEX"):
-            cv2.putText(error_frame, "ARIA could not find a webcam.", (55, 95), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 255), 2)
+            cv2.putText(
+                error_frame,
+                "ARIA could not find a webcam.",
+                (55, 95),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.9,
+                (0, 0, 255),
+                2,
+            )
             cv2.putText(
                 error_frame,
                 "Check your camera connection and try again.",
@@ -313,7 +355,9 @@ class AppRunner:
         if hasattr(cv2, "resizeWindow"):
             cv2.resizeWindow(self.window_name, 1400, 900)
         if hasattr(cv2, "setWindowProperty"):
-            cv2.setWindowProperty(self.window_name, cv2.WND_PROP_AUTOSIZE, cv2.WINDOW_NORMAL)
+            cv2.setWindowProperty(
+                self.window_name, cv2.WND_PROP_AUTOSIZE, cv2.WINDOW_NORMAL
+            )
         if hasattr(cv2, "setMouseCallback"):
             cv2.setMouseCallback(self.window_name, self._handle_mouse_event)
 
@@ -329,11 +373,15 @@ class AppRunner:
         now = time.time()
         for item in ui_state.toolbar_items:
             if point_in_any_rect(clicked, [item["rect"]]):
-                self.ui_controller.apply_action(self.state, item["id"], self.ui_callbacks, now)
+                self.ui_controller.apply_action(
+                    self.state, item["id"], self.ui_callbacks, now
+                )
                 return
         for item in ui_state.palette_items:
             if point_in_any_rect(clicked, [item["rect"]]):
-                self.ui_controller.apply_action(self.state, item["id"], self.ui_callbacks, now)
+                self.ui_controller.apply_action(
+                    self.state, item["id"], self.ui_callbacks, now
+                )
                 return
 
     def _show_frame(self, frame: np.ndarray) -> None:
@@ -357,7 +405,9 @@ class AppRunner:
         try:
             return self.hand_tracker_factory()
         except Exception as exc:
-            self.diagnostics.record_hand_tracking_failure(f"Hand tracker initialization failed: {exc}")
+            self.diagnostics.record_hand_tracking_failure(
+                f"Hand tracker initialization failed: {exc}"
+            )
             raise
 
     def _update_calibration(self, hand_landmarks, now: float) -> None:
@@ -368,7 +418,10 @@ class AppRunner:
         if hand_landmarks is not None:
             self.state.add_calibration_sample(estimate_hand_spread(hand_landmarks))
 
-        if self.state.calibration_started_at is None or now - self.state.calibration_started_at < CALIBRATION_SECONDS:
+        if (
+            self.state.calibration_started_at is None
+            or now - self.state.calibration_started_at < CALIBRATION_SECONDS
+        ):
             self.state.tracking_status_text = "Calibrating hand..."
             return
 
@@ -377,7 +430,9 @@ class AppRunner:
             if self.state.calibration_sample_count
             else BASE_HAND_SPREAD
         )
-        hand_scale_factor = average_spread / BASE_HAND_SPREAD if BASE_HAND_SPREAD > 0 else 1.0
+        hand_scale_factor = (
+            average_spread / BASE_HAND_SPREAD if BASE_HAND_SPREAD > 0 else 1.0
+        )
         self.state.finish_calibration(max(0.75, min(1.75, hand_scale_factor)))
         self.state.set_status("Calibration complete", now, 0.8)
         self.state.tracking_status_text = "DRAW READY"
@@ -390,7 +445,9 @@ class AppRunner:
 
         if self.state.prev_smoothed_point is None:
             self.state.set_tracking_stability(0.75)
-            self.state.tracking_status_text = "DRAW READY" if self.state.calibrated else "Calibrating hand..."
+            self.state.tracking_status_text = (
+                "DRAW READY" if self.state.calibrated else "Calibrating hand..."
+            )
             return
 
         movement = math.hypot(
@@ -406,12 +463,14 @@ class AppRunner:
         else:
             self.state.tracking_status_text = "Hold steady"
 
-    def _prepare_ui_state(self, frame, frame_width: int, frame_height: int) -> FrameUiState:
+    def _prepare_ui_state(
+        self, frame, frame_width: int, frame_height: int
+    ) -> FrameUiState:
         palette_items = get_palette_items(frame_width)
         toolbar_items = get_toolbar_items(frame_width, frame_height)
         with self.sprites_lock:
             selected_sprite = get_selected_sprite(self.sprites)
-            sprite_snapshot = list(sorted(self.sprites, key=lambda item: item.z_index))
+            sprite_snapshot = sorted(self.sprites, key=lambda item: item.z_index)
         thumbnail_items = get_thumbnail_items(frame, sprite_snapshot)
         return FrameUiState(
             palette_items=palette_items,
@@ -424,19 +483,39 @@ class AppRunner:
             selected_sprite=selected_sprite,
         )
 
-    def _draw_hand_tracking_overlay(self, frame: np.ndarray, hand_landmarks, frame_width: int, frame_height: int) -> None:
+    def _draw_hand_tracking_overlay(
+        self, frame: np.ndarray, hand_landmarks, frame_width: int, frame_height: int
+    ) -> None:
         if hand_landmarks is None:
             return
         if not hasattr(cv2, "line") or not hasattr(cv2, "circle"):
             return
 
-        points = [get_landmark_point(hand_landmarks, index, frame_width, frame_height) for index in range(21)]
+        points = [
+            get_landmark_point(hand_landmarks, index, frame_width, frame_height)
+            for index in range(21)
+        ]
         connections = [
-            (0, 1), (1, 2), (2, 3), (3, 4),
-            (0, 5), (5, 6), (6, 7), (7, 8),
-            (5, 9), (9, 10), (10, 11), (11, 12),
-            (9, 13), (13, 14), (14, 15), (15, 16),
-            (13, 17), (17, 18), (18, 19), (19, 20),
+            (0, 1),
+            (1, 2),
+            (2, 3),
+            (3, 4),
+            (0, 5),
+            (5, 6),
+            (6, 7),
+            (7, 8),
+            (5, 9),
+            (9, 10),
+            (10, 11),
+            (11, 12),
+            (9, 13),
+            (13, 14),
+            (14, 15),
+            (15, 16),
+            (13, 17),
+            (17, 18),
+            (18, 19),
+            (19, 20),
             (0, 17),
         ]
         for start, end in connections:
@@ -455,10 +534,14 @@ class AppRunner:
             return self._hands.process(rgb_frame)
         except OPEN_CV_ERROR as exc:
             logger.warning("OpenCV hand-tracking preprocessing failed: %s", exc)
-            self.diagnostics.record_hand_tracking_failure(f"OpenCV preprocessing failed: {exc}")
-        except Exception as exc:
+            self.diagnostics.record_hand_tracking_failure(
+                f"OpenCV preprocessing failed: {exc}"
+            )
+        except Exception as exc:  # noqa: BLE001 - MediaPipe backend boundary
             logger.warning("Hand tracking failed: %s", exc)
-            self.diagnostics.record_hand_tracking_failure(f"Hand tracking failed: {exc}")
+            self.diagnostics.record_hand_tracking_failure(
+                f"Hand tracking failed: {exc}"
+            )
         self.state.set_status("Hand tracking error", time.time(), 1.0)
         return None
 
@@ -477,6 +560,8 @@ class AppRunner:
         second_point = get_index_fingertip(all_hands[1], frame_width, frame_height)
 
         if selected_sprite and first_point and second_point:
+            self.state.resize_anchor_first_point = first_point
+            self.state.resize_anchor_second_point = second_point
             current_distance = get_fingertip_distance(first_point, second_point)
             if (
                 self.state.resizing_sprite_ref != id(selected_sprite)
@@ -497,6 +582,36 @@ class AppRunner:
             self.state.clear_resize()
         self.state.reset_interaction_transients()
 
+    def _resize_clutch_active(
+        self,
+        all_hands,
+        selected_sprite,
+        frame_width: int,
+        frame_height: int,
+        now: float,
+    ) -> bool:
+        if selected_sprite is None or not is_two_hand_resize(all_hands):
+            self.state.clear_resize_clutch()
+            return False
+
+        pinch_threshold = PINCH_START_DISTANCE * self.state.hand_scale_factor
+        both_pinching = all(
+            is_pinching(hand, frame_width, frame_height, pinch_threshold)
+            for hand in all_hands[:2]
+        )
+        if not both_pinching:
+            self.state.clear_resize_clutch()
+            return False
+
+        if self.state.resize_clutch_started_at is None:
+            self.state.resize_clutch_started_at = now
+            self.state.set_status(
+                "Hold both pinches to resize", now, RESIZE_CLUTCH_SECONDS + 0.45
+            )
+            return False
+
+        return now - self.state.resize_clutch_started_at >= RESIZE_CLUTCH_SECONDS
+
     def _handle_no_hands_detected(self) -> None:
         self.state.clear_resize()
         self.state.previous_pinch_active = False
@@ -507,6 +622,11 @@ class AppRunner:
         self.state.clear_drawing_path()
         self.state.clear_draw_pose()
         self.state.clear_fist_hold()
+        self.state.clear_color_toggle()
+        self.state.pinch_started_at = None
+        self.state.pinch_target_sprite_ref = None
+        self.state.hovered_sprite_ref = None
+        self.state.clear_resize_clutch()
         self.state.set_tracking_stability(0.0)
         self.state.tracking_status_text = "Waiting for hand"
         with self.sprites_lock:
@@ -530,10 +650,14 @@ class AppRunner:
             previous_raw = None
             if self.state.prev_smoothed_point is not None:
                 previous_raw = (
-                    int(round(self.state.prev_smoothed_point[0])),
-                    int(round(self.state.prev_smoothed_point[1])),
+                    round(self.state.prev_smoothed_point[0]),
+                    round(self.state.prev_smoothed_point[1]),
                 )
-            movement_distance = get_fingertip_distance(previous_raw, raw_fingertip) if previous_raw is not None else 0.0
+            movement_distance = (
+                get_fingertip_distance(previous_raw, raw_fingertip)
+                if previous_raw is not None
+                else 0.0
+            )
             smoothed = adaptive_smooth_point(
                 self.state.prev_smoothed_point,
                 raw_fingertip,
@@ -544,20 +668,32 @@ class AppRunner:
 
         scaled_pinch_start = PINCH_START_DISTANCE * self.state.hand_scale_factor
         scaled_pinch_release = PINCH_RELEASE_DISTANCE * self.state.hand_scale_factor
-        is_currently_pinching = is_pinching(hand_landmarks, frame_width, frame_height, scaled_pinch_start)
+        is_currently_pinching = is_pinching(
+            hand_landmarks, frame_width, frame_height, scaled_pinch_start
+        )
         pinch_distance = None
         if raw_fingertip is not None:
-            thumb_tip = get_landmark_point(hand_landmarks, THUMB_TIP, frame_width, frame_height)
+            thumb_tip = get_landmark_point(
+                hand_landmarks, THUMB_TIP, frame_width, frame_height
+            )
             pinch_distance = get_fingertip_distance(thumb_tip, raw_fingertip)
 
         with self.sprites_lock:
-            dragging_sprite = next((sprite for sprite in self.sprites if sprite.dragging), None)
-        if dragging_sprite and pinch_distance is not None and pinch_distance > scaled_pinch_release:
+            dragging_sprite = next(
+                (sprite for sprite in self.sprites if sprite.dragging), None
+            )
+        if (
+            dragging_sprite
+            and pinch_distance is not None
+            and pinch_distance > scaled_pinch_release
+        ):
             with self.sprites_lock:
                 dragging_sprite.dragging = False
 
         pinch_active = is_currently_pinching or (
-            dragging_sprite is not None and pinch_distance is not None and pinch_distance <= scaled_pinch_release
+            dragging_sprite is not None
+            and pinch_distance is not None
+            and pinch_distance <= scaled_pinch_release
         )
         pinch_started = pinch_active and not self.state.previous_pinch_active
 
@@ -570,14 +706,24 @@ class AppRunner:
             ui_state.toolbar_items,
             ui_state.palette_items,
         )
-        pointer_over_controls = point_in_any_rect(hover_point, ui_state.palette_rects + ui_state.toolbar_rects)
+        pointer_over_controls = point_in_any_rect(
+            hover_point, ui_state.palette_rects + ui_state.toolbar_rects
+        )
 
         now = time.time()
-        triggered_action = self.ui_controller.consume_hover(self.state, hover_candidate, now)
+        triggered_action = self.ui_controller.consume_hover(
+            self.state, hover_candidate, now
+        )
         if triggered_action:
-            self.ui_controller.apply_action(self.state, triggered_action, self.ui_callbacks, now)
+            self.ui_controller.apply_action(
+                self.state, triggered_action, self.ui_callbacks, now
+            )
 
-        if self.state.interaction_mode == "select_mode" and current_point is not None and not pointer_over_controls:
+        if (
+            self.state.interaction_mode == "select_mode"
+            and current_point is not None
+            and not pointer_over_controls
+        ):
             hit_point = raw_fingertip or current_point
             with self.sprites_lock:
                 self.sprite_controller.handle_select_mode(
@@ -607,7 +753,9 @@ class AppRunner:
                     drawing_canvas=self.drawing_canvas,
                     sprites=self.sprites,
                     now=now,
-                    ui_rects=ui_state.palette_rects + ui_state.toolbar_rects + ui_state.thumbnail_rects,
+                    ui_rects=ui_state.palette_rects
+                    + ui_state.toolbar_rects
+                    + ui_state.thumbnail_rects,
                 )
         else:
             with self.canvas_lock:
@@ -618,41 +766,130 @@ class AppRunner:
         self.state.previous_pinch_active = pinch_active
         return current_point, raw_fingertip
 
-    def _render_output(self, frame, palette_items, toolbar_items, thumbnail_items, current_point, is_resize_mode) -> np.ndarray:
+    def _render_output(
+        self,
+        frame,
+        palette_items,
+        toolbar_items,
+        thumbnail_items,
+        current_point,
+        is_resize_mode,
+    ) -> np.ndarray:
         with self.canvas_lock:
             output_frame = self.drawing_canvas.overlay_on(frame, ALPHA)
 
         dwell_ratio = (
             dwell_progress(
                 self.state.hover_start_time,
-                config.UI_DRAW_MODE_DWELL_SECONDS if self.state.interaction_mode == "draw_mode" else config.DWELL_SECONDS,
+                config.UI_DRAW_MODE_DWELL_SECONDS
+                if self.state.interaction_mode == "draw_mode"
+                else config.DWELL_SECONDS,
                 time.time(),
             )
             if self.state.hover_target_id
             else 0.0
         )
-        draw_palette(output_frame, palette_items, self.state.brush_name, self.state.hover_target_id, dwell_ratio)
-        draw_toolbar(output_frame, toolbar_items, self.state.interaction_mode, self.state.hover_target_id, dwell_ratio)
+        draw_palette(
+            output_frame,
+            palette_items,
+            self.state.brush_name,
+            self.state.hover_target_id,
+            dwell_ratio,
+        )
+        draw_toolbar(
+            output_frame,
+            toolbar_items,
+            self.state.interaction_mode,
+            self.state.hover_target_id,
+            dwell_ratio,
+        )
         draw_thumbnail_strip(output_frame, thumbnail_items, self.state.hover_target_id)
         draw_status(output_frame, self.state.status_text)
         draw_mode_indicator(
             output_frame,
-            "RESIZING" if is_resize_mode else ("DRAWING" if self.state.interaction_mode == "draw_mode" else "SELECTING"),
+            "RESIZING"
+            if is_resize_mode
+            else (
+                "DRAWING" if self.state.interaction_mode == "draw_mode" else "SELECTING"
+            ),
         )
-        draw_voice_indicator(output_frame, self.jarvis.listening_event.is_set(), self.jarvis.speaking_event.is_set())
+        draw_voice_indicator(
+            output_frame,
+            self.jarvis.listening_event.is_set(),
+            self.jarvis.speaking_event.is_set(),
+        )
         draw_warning_overlay(
             output_frame,
-            build_warning_text(self.state.ai_warning_text, self.jarvis.voice_available, self.jarvis.last_error),
+            build_warning_text(
+                self.state.ai_warning_text,
+                self.jarvis.voice_available,
+                self.jarvis.last_error,
+            ),
         )
         if self.state.interaction_mode == "draw_mode":
-            brush_color = config.get_brush_color(self.state.brush_name) or config.DRAW_COLOR
+            brush_color = (
+                config.get_brush_color(self.state.brush_name) or config.DRAW_COLOR
+            )
             draw_brush_preview(output_frame, current_point, LINE_THICKNESS, brush_color)
-            draw_fingertip_marker(output_frame, current_point, self.state.tracking_stability)
+            draw_fingertip_marker(
+                output_frame, current_point, self.state.tracking_stability
+            )
             draw_tracking_feedback(
                 output_frame,
                 self.state.calibrated,
                 self.state.tracking_stability,
                 self.state.tracking_status_text,
+            )
+            if self.state.fist_start_time is not None:
+                draw_gesture_progress(
+                    output_frame,
+                    current_point,
+                    dwell_progress(
+                        self.state.fist_start_time,
+                        config.FINISH_HOLD_SECONDS,
+                        time.time(),
+                    ),
+                    "Hold to create sprite",
+                    (80, 255, 120),
+                )
+            elif (
+                self.state.color_toggle_hold_started_at is not None
+                and not self.state.color_toggle_triggered
+            ):
+                draw_gesture_progress(
+                    output_frame,
+                    current_point,
+                    dwell_progress(
+                        self.state.color_toggle_hold_started_at,
+                        config.COLOR_TOGGLE_GESTURE_SECONDS,
+                        time.time(),
+                    ),
+                    "Hold to switch color",
+                )
+        elif (
+            self.state.pinch_started_at is not None
+            and self.state.pinch_target_sprite_ref is not None
+        ):
+            draw_gesture_progress(
+                output_frame,
+                current_point,
+                dwell_progress(
+                    self.state.pinch_started_at, config.DRAG_CLUTCH_SECONDS, time.time()
+                ),
+                "Hold to drag",
+            )
+
+        if is_resize_mode:
+            scale_factor = None
+            if self.state.resize_anchor_distance and self.state.prev_resize_distance:
+                scale_factor = (
+                    self.state.prev_resize_distance / self.state.resize_anchor_distance
+                )
+            draw_resize_anchor(
+                output_frame,
+                self.state.resize_anchor_first_point,
+                self.state.resize_anchor_second_point,
+                scale_factor,
             )
         draw_fps(output_frame, self.state.fps)
         return output_frame
@@ -674,25 +911,39 @@ class AppRunner:
         self.state.frame_dimensions["height"] = frame_height
         current_point = None
         results = self._process_hand_tracking(frame)
-        all_hands = results.multi_hand_landmarks if results and results.multi_hand_landmarks else []
+        all_hands = (
+            results.multi_hand_landmarks
+            if results and results.multi_hand_landmarks
+            else []
+        )
         hand_landmarks = all_hands[0] if all_hands else None
         self._update_calibration(hand_landmarks, time.time())
         ui_state = self._prepare_ui_state(frame, frame_width, frame_height)
         self._latest_ui_state = ui_state
 
-        is_resize_mode = self.state.interaction_mode == "select_mode" and is_two_hand_resize(all_hands)
+        now = time.time()
+        with self.sprites_lock:
+            selected_sprite = get_selected_sprite(self.sprites)
+        is_resize_mode = (
+            self.state.interaction_mode == "select_mode"
+            and self._resize_clutch_active(
+                all_hands, selected_sprite, frame_width, frame_height, now
+            )
+        )
         if not self.state.calibrated:
             if hand_landmarks is None:
                 self._handle_no_hands_detected()
             else:
                 self.state.status_text = "Calibrating"
-                self._update_tracking_stability(get_index_fingertip(hand_landmarks, frame_width, frame_height))
+                self._update_tracking_stability(
+                    get_index_fingertip(hand_landmarks, frame_width, frame_height)
+                )
         elif is_resize_mode:
             self._handle_resize_mode(
                 all_hands=all_hands,
                 frame_width=frame_width,
                 frame_height=frame_height,
-                selected_sprite=ui_state.selected_sprite,
+                selected_sprite=selected_sprite,
             )
         elif hand_landmarks:
             current_point, _ = self._handle_hand_interactions(
@@ -708,7 +959,30 @@ class AppRunner:
             overlay_sprite(frame, sprite)
         for sprite in ui_state.sprite_snapshot:
             draw_sprite_selection(frame, sprite)
-        self._draw_hand_tracking_overlay(frame, hand_landmarks, frame_width, frame_height)
+        with self.sprites_lock:
+            hovered_sprite = next(
+                (
+                    sprite
+                    for sprite in self.sprites
+                    if id(sprite) == self.state.hovered_sprite_ref
+                ),
+                None,
+            )
+            delete_pending_sprite = next(
+                (
+                    sprite
+                    for sprite in self.sprites
+                    if id(sprite) == self.state.delete_pending_sprite_ref
+                ),
+                None,
+            )
+        if hovered_sprite is not None:
+            draw_sprite_candidate(frame, hovered_sprite)
+        if delete_pending_sprite is not None:
+            draw_sprite_delete_confirmation(frame, delete_pending_sprite)
+        self._draw_hand_tracking_overlay(
+            frame, hand_landmarks, frame_width, frame_height
+        )
 
         elapsed = time.time() - loop_start
         if elapsed > 0:
@@ -736,7 +1010,7 @@ class AppRunner:
 
         try:
             self._hands = self._initialize_hands()
-        except Exception:
+        except Exception:  # noqa: BLE001 - optional hand-tracking backend
             return
 
         self.jarvis.start()
@@ -749,7 +1023,11 @@ class AppRunner:
                 if output_frame is not None:
                     self._show_frame(output_frame)
 
-                remaining = max(0.0, self.frame_interval - (self.diagnostics.last_frame_latency_ms / 1000.0))
+                remaining = max(
+                    0.0,
+                    self.frame_interval
+                    - (self.diagnostics.last_frame_latency_ms / 1000.0),
+                )
                 wait_ms = max(1, int(remaining * 1000))
                 if self._wait_for_exit(wait_ms):
                     break

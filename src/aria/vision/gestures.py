@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import math
-from typing import Optional
 
 from ..config import (
     DRAW_INDEX_MIN_OPENNESS,
@@ -78,14 +77,18 @@ def is_closed_fist(hand_landmarks) -> bool:
     )
 
 
-def get_landmark_point(hand_landmarks, landmark_idx: int, frame_width: int, frame_height: int) -> tuple[int, int]:
+def get_landmark_point(
+    hand_landmarks, landmark_idx: int, frame_width: int, frame_height: int
+) -> tuple[int, int]:
     landmark = hand_landmarks.landmark[landmark_idx]
     x = int(landmark.x * frame_width)
     y = int(landmark.y * frame_height)
     return x, y
 
 
-def get_index_fingertip(hand_landmarks, frame_width: int, frame_height: int) -> Optional[tuple[int, int]]:
+def get_index_fingertip(
+    hand_landmarks, frame_width: int, frame_height: int
+) -> tuple[int, int] | None:
     if hand_landmarks is None:
         return None
 
@@ -104,7 +107,9 @@ def estimate_hand_spread(hand_landmarks) -> float:
     return math.hypot(width, height)
 
 
-def is_pinching(hand_landmarks, frame_width: int, frame_height: int, threshold: float) -> bool:
+def is_pinching(
+    hand_landmarks, frame_width: int, frame_height: int, threshold: float
+) -> bool:
     thumb_tip = get_landmark_point(hand_landmarks, THUMB_TIP, frame_width, frame_height)
     index_tip = get_landmark_point(hand_landmarks, INDEX_TIP, frame_width, frame_height)
     return get_fingertip_distance(thumb_tip, index_tip) < threshold
@@ -126,5 +131,10 @@ def dwell_progress(start_time: float | None, dwell_seconds: float, now: float) -
     return max(0.0, min(1.0, (now - start_time) / dwell_seconds))
 
 
-def is_double_pinch(previous_pinch_time: float | None, now: float, threshold_seconds: float) -> bool:
-    return previous_pinch_time is not None and now - previous_pinch_time <= threshold_seconds
+def is_double_pinch(
+    previous_pinch_time: float | None, now: float, threshold_seconds: float
+) -> bool:
+    return (
+        previous_pinch_time is not None
+        and now - previous_pinch_time <= threshold_seconds
+    )

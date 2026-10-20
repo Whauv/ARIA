@@ -1,10 +1,9 @@
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
-import os
 from pathlib import Path
-
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -14,7 +13,11 @@ def run_step(label: str, command: list[str]) -> None:
     env = os.environ.copy()
     existing_pythonpath = env.get("PYTHONPATH", "")
     src_path = str(PROJECT_ROOT / "src")
-    env["PYTHONPATH"] = src_path if not existing_pythonpath else f"{src_path}{os.pathsep}{existing_pythonpath}"
+    env["PYTHONPATH"] = (
+        src_path
+        if not existing_pythonpath
+        else f"{src_path}{os.pathsep}{existing_pythonpath}"
+    )
     subprocess.run(command, cwd=PROJECT_ROOT, check=True, env=env)
 
 
