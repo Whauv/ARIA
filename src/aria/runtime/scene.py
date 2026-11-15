@@ -50,6 +50,15 @@ class SceneHistory:
             self._snapshots.pop(0)
         self._index = len(self._snapshots) - 1
 
+    def __len__(self) -> int:
+        return len(self._snapshots)
+
+    def can_undo(self) -> bool:
+        return self._index > 0
+
+    def can_redo(self) -> bool:
+        return self._index < len(self._snapshots) - 1
+
     def undo(self) -> SceneSnapshot | None:
         if self._index <= 0:
             return None

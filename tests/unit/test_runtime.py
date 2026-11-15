@@ -10,10 +10,9 @@ from aria.drawing.sprite import Sprite
 from aria.runtime.controllers import (
     DrawingInteractionController,
     SpriteInteractionController,
-    UIActionCallbacks,
     UIInteractionController,
-    build_warning_text,
     clear_sprite_selection,
+    describe_services,
     get_selected_sprite,
 )
 from aria.runtime.state import RuntimeState
@@ -54,20 +53,45 @@ class UIInteractionControllerTests(unittest.TestCase):
         self.assertEqual(second, "toolbar:draw_mode")
         self.assertIsNone(state.hover_target_id)
 
-    def test_apply_palette_action_updates_brush_state(self) -> None:
+    def test_sustained_hover_fires_only_once_until_pointer_leaves(self) -> None:
         state = RuntimeState()
+        state.interaction_mode = "select_mode"
         controller = UIInteractionController()
-        callbacks = UIActionCallbacks(
-            set_brush_color=lambda color_name: color_name == "red",
-            clear_canvas=lambda: None,
-            save_snapshot=lambda path: True,
-            undo_last_stroke=lambda: True,
+        dwell = config.UI_SELECT_MODE_DWELL_SECONDS
+        fired = [
+            controller.consume_hover(state, "toolbar:undo", 10.0 + step * 0.1)
+            for step in range(int(dwell * 10) * 4 + 1)
+        ]
+        self.assertEqual(fired.count("toolbar:undo"), 1)
+
+        controller.consume_hover(state, None, 20.0)
+        controller.consume_hover(state, "toolbar:undo", 20.1)
+        self.assertEqual(
+            controller.consume_hover(state, "toolbar:undo", 20.1 + dwell),
+            "toolbar:undo",
         )
 
-        controller.apply_action(state, "palette:red", callbacks, now=5.0)
+    def test_draw_mode_uses_longer_dwell_than_select_mode(self) -> None:
+        state = RuntimeState()
+        controller = UIInteractionController()
+        controller.consume_hover(state, "toolbar:clear", 1.0)
+        early = 1.0 + config.UI_SELECT_MODE_DWELL_SECONDS + 0.01
+        self.assertIsNone(controller.consume_hover(state, "toolbar:clear", early))
+        late = 1.0 + config.UI_DRAW_MODE_DWELL_SECONDS
+        self.assertEqual(
+            controller.consume_hover(state, "toolbar:clear", late), "toolbar:clear"
+        )
 
-        self.assertEqual(state.brush_name, "red")
-        self.assertIn("Red", state.status_text)
+    def test_disabled_toolbar_items_never_become_hover_targets(self) -> None:
+        controller = UIInteractionController()
+        items = [
+            {"id": "toolbar:undo", "action": "undo", "label": "Undo",
+             "rect": (0, 0, 100, 40), "shortcut": "U"},
+        ]  # fmt: skip
+        candidate = controller.resolve_hover_candidate(
+            (20, 20), False, "select_mode", False, items, [], {"toolbar:undo"}
+        )
+        self.assertIsNone(candidate)
 
 
 class SpriteInteractionControllerTests(unittest.TestCase):
@@ -323,12 +347,37 @@ class DrawingInteractionControllerTests(unittest.TestCase):
 
 
 class RuntimeUtilityTests(unittest.TestCase):
-    def test_warning_text_combines_flags(self) -> None:
+    def test_service_states_are_honest(self) -> None:
+        base = {
+            "ai_enabled": False,
+            "voice_available": True,
+            "voice_error": None,
+            "voice_listening": False,
+            "voice_speaking": False,
+            "transcription_enabled": True,
+            "wake_word_ready": False,
+        }
+        services = describe_services(**base)
+        self.assertEqual(services["voice"], ("starting", "info"))
+        self.assertEqual(services["ai"][1], "off")
         self.assertEqual(
-            build_warning_text("AI disabled", False, "voice failed"),
-            "AI off | Voice off",
+            describe_services(**{**base, "wake_word_ready": True})["voice"],
+            ("ready", "ok"),
         )
-        self.assertEqual(build_warning_text(None, True, None), None)
+        self.assertEqual(
+            describe_services(**{**base, "transcription_enabled": False})["voice"],
+            ("wake word only", "warn"),
+        )
+        self.assertEqual(
+            describe_services(
+                **{**base, "voice_available": False, "voice_error": "no mic"}
+            )["voice"],
+            ("off", "warn"),
+        )
+        self.assertEqual(
+            describe_services(**{**base, "voice_listening": True})["voice"][0],
+            "listening",
+        )
 
     def test_selection_helpers(self) -> None:
         sprite = Sprite(

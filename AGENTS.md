@@ -21,12 +21,13 @@ python scripts\run_checks.py
 - `src/aria/ai/`: Gemini image analysis helpers
 - `src/aria/assistant/`: Jarvis voice assistant and command parsing
 - `src/aria/drawing/`: drawing canvas and sprite primitives
-- `src/aria/runtime/`: state, controllers, capture, and hand-tracking services
-- `src/aria/ui/`: UI layout and rendering helpers
+- `src/aria/runtime/`: state, controllers, shared commands, notifications, capture, and hand-tracking services
+- `src/aria/ui/`: visual tokens (`theme.py`), geometry (`layout.py`), renderers (`ui.py`), help text
 - `src/aria/vision/`: gesture utilities
 - `tests/unit/`: unit tests
 - `tests/integration/`: integration placeholders for hardware-backed flows
 - `scripts/`: developer automation and checks
+- `landing/`: project website (React + TypeScript + Vite; `npm ci`, `npm run build`)
 
 ## Code Style
 

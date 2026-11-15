@@ -1,577 +1,752 @@
+"""Overlay renderers. Geometry comes from ``layout``; tokens from ``theme``."""
+
 from __future__ import annotations
 
-from collections.abc import Iterable
-from typing import TypedDict
+import math
+from collections.abc import Iterable, Sequence
 
 import cv2
 import numpy as np
 
-from ..config import (
-    BRUSH_COLORS,
-    BRUSH_PREVIEW_RADIUS,
-    BUTTON_ACTIVE_COLOR,
-    BUTTON_HOVER_COLOR,
-    BUTTON_TEXT_COLOR,
-    ERASER_COLOR,
-    FPS_COLOR,
-    PALETTE_ORDER,
-    PANEL_BG_COLOR,
-    TEST_PALETTE_ORDER,
-    THUMBNAIL_BORDER_COLOR,
-    THUMBNAIL_WIDTH,
-    TOOLBAR_ACTIONS,
-    TOOLBAR_BG_COLOR,
-    TOOLBAR_HEIGHT,
-    TRACKING_STABLE_THRESHOLD,
-    TRACKING_UNSTABLE_THRESHOLD,
-    UI_DRAW_MODE_PADDING,
-    UI_SELECT_MODE_PADDING,
-    WARNING_BG_COLOR,
-    WARNING_TEXT_COLOR,
+from .. import config
+from ..config import TRACKING_STABLE_THRESHOLD, TRACKING_UNSTABLE_THRESHOLD
+from . import theme
+from .layout import (
+    PaletteItem,
+    ThumbnailItem,
+    ToolbarItem,
+    UiLayout,
+    compute_layout,
+    get_hover_padding,
 )
 
+__all__ = [
+    "PaletteItem",
+    "ThumbnailItem",
+    "ToolbarItem",
+    "UiLayout",
+    "compute_layout",
+    "draw_gesture_progress",
+    "draw_guide",
+    "draw_hand_skeleton",
+    "draw_help",
+    "draw_layers",
+    "draw_mode_frame",
+    "draw_palette",
+    "draw_pointer",
+    "draw_resize_anchor",
+    "draw_status_panel",
+    "draw_toasts",
+    "draw_toolbar",
+    "draw_top_bar",
+    "draw_voice_card",
+    "get_hover_padding",
+]
 
-class PaletteItem(TypedDict):
-    id: str
-    label: str
-    color_name: str
-    preview_color: tuple[int, int, int]
-    rect: tuple[int, int, int, int]
-
-
-class ToolbarItem(TypedDict):
-    id: str
-    action: str
-    label: str
-    rect: tuple[int, int, int, int]
-
-
-class ThumbnailItem(TypedDict):
-    id: str
-    rect: tuple[int, int, int, int]
-    sprite: object
-
-
-def get_hover_padding(interaction_mode: str, target_kind: str) -> int:
-    base_padding = (
-        UI_DRAW_MODE_PADDING
-        if interaction_mode == "draw_mode"
-        else UI_SELECT_MODE_PADDING
-    )
-    if target_kind == "toolbar":
-        return base_padding + 8
-    if target_kind == "palette":
-        return base_padding
-    return base_padding
+HAND_CONNECTIONS = (
+    (0, 1), (1, 2), (2, 3), (3, 4), (0, 5), (5, 6), (6, 7), (7, 8),
+    (5, 9), (9, 10), (10, 11), (11, 12), (9, 13), (13, 14), (14, 15),
+    (15, 16), (13, 17), (17, 18), (18, 19), (19, 20), (0, 17),
+)  # fmt: skip
 
 
-def _draw_panel(
+def _scaled(layout: UiLayout, font_scale: float) -> float:
+    return font_scale * layout.scale
+
+
+def _center_text(
     frame: np.ndarray,
-    rect: tuple[int, int, int, int],
-    color: tuple[int, int, int],
-    alpha: float,
+    text: str,
+    rect: theme.Rect,
+    scale: float,
+    color: theme.Color,
+    thickness: int = 1,
 ) -> None:
     left, top, right, bottom = rect
-    overlay = frame.copy()
-    cv2.rectangle(overlay, (left, top), (right, bottom), color, -1)
-    frame[:] = cv2.addWeighted(overlay, alpha, frame, 1.0 - alpha, 0.0)
+    text = theme.fit_text(text, right - left - 8, scale, thickness)
+    width, height = theme.text_size(text, scale, thickness)
+    origin = (left + (right - left - width) // 2, top + (bottom - top + height) // 2)
+    theme.draw_text(frame, text, origin, scale, color, thickness)
 
 
-def get_palette_items(frame_width: int) -> list[PaletteItem]:
-    items: list[PaletteItem] = []
-    button_width = 112
-    button_height = 30
-    spacing = 8
-    x = 14
-    y = 68
-    palette_order = TEST_PALETTE_ORDER if TEST_PALETTE_ORDER else PALETTE_ORDER
-    for color_name in palette_order:
-        items.append(
-            {
-                "id": f"palette:{color_name}",
-                "label": color_name.title(),
-                "color_name": color_name,
-                "preview_color": BRUSH_COLORS[color_name],
-                "rect": (x, y, x + button_width, y + button_height),
-            }
+# --- Workspace chrome ----------------------------------------------------
+
+
+def draw_mode_frame(frame: np.ndarray, layout: UiLayout, interaction_mode: str) -> None:
+    """Thin inset border in the mode color: always-visible mode cue."""
+    left, top, right, bottom = layout.workspace_rect
+    cv2.rectangle(
+        frame,
+        (left + 1, top + 1),
+        (right - 2, bottom - 2),
+        theme.mode_color(interaction_mode),
+        max(1, layout.px(2)),
+    )
+
+
+def draw_top_bar(
+    frame: np.ndarray,
+    layout: UiLayout,
+    interaction_mode: str,
+    tool_detail: str,
+    tool_swatch: theme.Color | None,
+    activity: str,
+    chips: Sequence[tuple[str, str, str]],
+    fps: float,
+) -> None:
+    """Mode + tool on the left, activity in the middle, services on the right.
+
+    ``chips`` is a sequence of (name, label, status_kind).
+    """
+    left, top, right, bottom = layout.top_bar
+    theme.fill_rect(frame, layout.top_bar, theme.GRAPHITE_950, 0.84)
+    cv2.line(frame, (left, bottom - 1), (right, bottom - 1), theme.GRAPHITE_700, 1)
+    mid_y = (top + bottom) // 2
+    label_scale = _scaled(layout, theme.TYPE_LABEL)
+    title_scale = _scaled(layout, theme.TYPE_TITLE)
+    caption = _scaled(layout, theme.TYPE_CAPTION)
+
+    # Mode chip
+    color = theme.mode_color(interaction_mode)
+    x = layout.margin
+    theme.status_dot(frame, (x + layout.px(6), mid_y), layout.px(5), color)
+    x += layout.px(18)
+    mode_label = config.MODE_LABELS.get(interaction_mode, interaction_mode.upper())
+    width, height = theme.text_size(mode_label, title_scale, 2)
+    theme.draw_text(
+        frame, mode_label, (x, mid_y + height // 2), title_scale, color, 2,
+        theme.FONT_BOLD,
+    )  # fmt: skip
+    x += width + layout.px(14)
+    cv2.line(
+        frame,
+        (x, top + layout.px(12)),
+        (x, bottom - layout.px(12)),
+        theme.GRAPHITE_700,
+        1,
+    )
+    x += layout.px(14)
+    if tool_swatch is not None:
+        size = layout.px(14)
+        swatch = (x, mid_y - size // 2, x + size, mid_y + size // 2)
+        theme.fill_rect(frame, swatch, tool_swatch, 1.0)
+        theme.outline_rect(frame, swatch, theme.TEXT_MUTED)
+        x += size + layout.px(8)
+    width, height = theme.text_size(tool_detail, label_scale)
+    theme.draw_text(
+        frame, tool_detail, (x, mid_y + height // 2), label_scale, theme.TEXT
+    )
+    left_end = x + width + layout.px(20)
+
+    # Service chips, right-aligned
+    x = right - layout.margin
+    fps_text = f"{fps:4.0f} fps"
+    width, height = theme.text_size(fps_text, caption)
+    x -= width
+    theme.draw_text(
+        frame, fps_text, (x, mid_y + height // 2), caption, theme.TEXT_MUTED
+    )
+    for name, label, kind in reversed(list(chips)):
+        text = f"{name} {label}"
+        width, height = theme.text_size(text, caption)
+        x -= width + layout.px(30)
+        dot_color = theme.STATUS_COLORS.get(kind, theme.TEXT_MUTED)
+        theme.status_dot(frame, (x + layout.px(5), mid_y), layout.px(4), dot_color)
+        theme.draw_text(
+            frame, text, (x + layout.px(14), mid_y + height // 2), caption, theme.TEXT
         )
-        y += button_height + spacing
-    return items
+    right_start = x - layout.px(20)
+
+    # Activity, centered in the remaining space
+    if activity and right_start - left_end > layout.px(60):
+        _center_text(
+            frame, activity, (left_end, top, right_start, bottom), label_scale,
+            theme.TEXT_MUTED,
+        )  # fmt: skip
 
 
 def draw_palette(
     frame: np.ndarray,
-    items: list[PaletteItem],
+    layout: UiLayout,
     active_color_name: str,
     hover_target_id: str | None,
     dwell_ratio: float,
+    interaction_mode: str,
 ) -> None:
-    if not items:
+    if not layout.palette_items or layout.palette_rect is None:
         return
-
-    first_left, first_top, _, _ = items[0]["rect"]
-    _, _, last_right, last_bottom = items[-1]["rect"]
-    _draw_panel(
-        frame,
-        (first_left - 8, first_top - 8, last_right + 8, last_bottom + 8),
-        PANEL_BG_COLOR,
-        0.4,
-    )
-    for item in items:
+    theme.panel(frame, layout.palette_rect, border=None, alpha=0.7)
+    label_scale = _scaled(layout, theme.TYPE_LABEL)
+    caption = _scaled(layout, theme.TYPE_CAPTION)
+    accent = theme.mode_color(interaction_mode)
+    for item in layout.palette_items:
         left, top, right, bottom = item["rect"]
-        color_name = item["color_name"]
-        fill_color = ERASER_COLOR if color_name == "eraser" else item["preview_color"]
-        background = (
-            BUTTON_ACTIVE_COLOR if color_name == active_color_name else (38, 42, 54)
+        active = item["color_name"] == active_color_name
+        hovered = hover_target_id == item["id"]
+        theme.fill_rect(frame, item["rect"], theme.GRAPHITE_800, 0.92)
+        border = (
+            theme.TEXT
+            if active
+            else (theme.TEXT_MUTED if hovered else theme.GRAPHITE_700)
         )
-        cv2.rectangle(frame, (left, top), (right, bottom), background, -1)
-        swatch_left = left + 8
-        swatch_right = left + 34
-        swatch_top = top + 5
-        swatch_bottom = bottom - 5
-        cv2.rectangle(
-            frame,
-            (swatch_left, swatch_top),
-            (swatch_right, swatch_bottom),
-            fill_color,
-            -1,
+        theme.outline_rect(frame, item["rect"], border, 2 if active else 1)
+
+        inset = layout.px(5)
+        swatch = (
+            left + inset,
+            top + inset,
+            left + (bottom - top) - inset,
+            bottom - inset,
         )
-        cv2.putText(
-            frame,
-            item["label"],
-            (left + 42, top + 21),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.48,
-            BUTTON_TEXT_COLOR,
-            1,
-            cv2.LINE_AA,
-        )
-        if hover_target_id == item["id"]:
-            progress_width = int((right - left) * dwell_ratio)
-            cv2.rectangle(
+        if item["color_name"] == "eraser":
+            theme.fill_rect(frame, swatch, theme.GRAPHITE_950, 1.0)
+            cv2.line(
                 frame,
-                (left, bottom - 4),
-                (left + progress_width, bottom),
-                BUTTON_HOVER_COLOR,
-                -1,
+                (swatch[0], swatch[3] - 1),
+                (swatch[2] - 1, swatch[1]),
+                theme.TEXT_MUTED,
+                1,
+                theme.LINE,
             )
+        else:
+            theme.fill_rect(frame, swatch, item["preview_color"], 1.0)
+        theme.outline_rect(frame, swatch, theme.GRAPHITE_500)
 
-
-def get_toolbar_items(frame_width: int, frame_height: int) -> list[ToolbarItem]:
-    items: list[ToolbarItem] = []
-    side_margin = 16
-    spacing = 10
-    available_width = max(320, frame_width - side_margin * 2)
-    button_width = max(
-        100,
-        (available_width - (len(TOOLBAR_ACTIONS) - 1) * spacing)
-        // len(TOOLBAR_ACTIONS),
-    )
-    total_width = (
-        len(TOOLBAR_ACTIONS) * button_width + (len(TOOLBAR_ACTIONS) - 1) * spacing
-    )
-    if total_width > available_width:
-        button_width = max(
-            88,
-            (available_width - (len(TOOLBAR_ACTIONS) - 1) * spacing)
-            // len(TOOLBAR_ACTIONS),
+        text_x = swatch[2] + layout.px(8)
+        shortcut_w = (
+            theme.text_size(item["shortcut"], caption)[0] if item["shortcut"] else 0
         )
-        total_width = (
-            len(TOOLBAR_ACTIONS) * button_width + (len(TOOLBAR_ACTIONS) - 1) * spacing
+        label = theme.fit_text(
+            item["label"], right - text_x - shortcut_w - layout.px(12), label_scale
         )
-    start_x = max(side_margin, (frame_width - total_width) // 2)
-    top = frame_height - TOOLBAR_HEIGHT + 14
-    bottom = frame_height - 12
-
-    for index, (action_id, label) in enumerate(TOOLBAR_ACTIONS):
-        left = start_x + index * (button_width + spacing)
-        right = min(frame_width - side_margin, left + button_width)
-        items.append(
-            {
-                "id": f"toolbar:{action_id}",
-                "action": action_id,
-                "label": label,
-                "rect": (left, top, right, bottom),
-            }
-        )
-    return items
+        _width, height = theme.text_size(item["label"], label_scale)
+        baseline = top + (bottom - top + height) // 2
+        theme.draw_text(
+            frame, label, (text_x, baseline), label_scale,
+            theme.TEXT if active else theme.TEXT_MUTED,
+        )  # fmt: skip
+        if item["shortcut"]:
+            width = shortcut_w
+            theme.draw_text(
+                frame, item["shortcut"], (right - width - layout.px(7), baseline),
+                caption, theme.GRAPHITE_500,
+            )  # fmt: skip
+        if hovered and dwell_ratio > 0:
+            fill = int((right - left) * dwell_ratio)
+            theme.fill_rect(
+                frame, (left, bottom - layout.px(3), left + fill, bottom), accent, 1.0
+            )
 
 
 def draw_toolbar(
     frame: np.ndarray,
-    items: list[ToolbarItem],
-    active_action: str,
+    layout: UiLayout,
+    interaction_mode: str,
     hover_target_id: str | None,
     dwell_ratio: float,
+    disabled_ids: Iterable[str] = (),
 ) -> None:
-    if not items:
+    if not layout.toolbar_items:
         return
+    disabled = set(disabled_ids)
+    theme.fill_rect(frame, layout.toolbar_rect, theme.GRAPHITE_950, 0.8)
+    left, top, right, _ = layout.toolbar_rect
+    cv2.line(frame, (left, top), (right, top), theme.GRAPHITE_700, 1)
+    label_scale = _scaled(layout, theme.TYPE_BODY)
+    caption = _scaled(layout, theme.TYPE_CAPTION)
+    accent = theme.mode_color(interaction_mode)
+    for item in layout.toolbar_items:
+        rect = item["rect"]
+        b_left, b_top, b_right, b_bottom = rect
+        is_mode = item["action"] in (config.MODE_DRAW, config.MODE_SELECT)
+        active = is_mode and item["action"] == interaction_mode
+        hovered = hover_target_id == item["id"]
+        is_disabled = item["id"] in disabled
 
-    top = frame.shape[0] - TOOLBAR_HEIGHT
-    _draw_panel(
-        frame,
-        (12, top - 4, frame.shape[1] - 12, frame.shape[0] - 8),
-        TOOLBAR_BG_COLOR,
-        0.46,
-    )
-    for item in items:
-        left, item_top, right, bottom = item["rect"]
-        background = (
-            BUTTON_ACTIVE_COLOR if item["action"] == active_action else (38, 42, 54)
-        )
-        cv2.rectangle(frame, (left, item_top), (right, bottom), background, -1)
-        text_scale = 0.52 if (right - left) < 120 else 0.58
-        text_x = left + 10 if (right - left) < 120 else left + 12
-        cv2.putText(
-            frame,
-            item["label"],
-            (text_x, item_top + 30),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            text_scale,
-            BUTTON_TEXT_COLOR,
-            2,
-            cv2.LINE_AA,
-        )
-        if hover_target_id == item["id"]:
-            progress_width = int((right - left) * dwell_ratio)
-            cv2.rectangle(
+        theme.fill_rect(frame, rect, theme.GRAPHITE_800, 0.94)
+        if active:
+            border = accent
+        elif hovered and not is_disabled:
+            border = theme.TEXT_MUTED
+        else:
+            border = theme.GRAPHITE_700
+        theme.outline_rect(frame, rect, border, 2 if active else 1)
+        if active:
+            theme.fill_rect(
+                frame, (b_left, b_bottom - layout.px(4), b_right, b_bottom), accent, 1.0
+            )
+
+        if is_disabled:
+            text_color = theme.GRAPHITE_500
+        elif active:
+            text_color = accent
+        else:
+            text_color = theme.TEXT
+        _center_text(frame, item["label"], rect, label_scale, text_color, 1)
+        if item["shortcut"]:
+            width, height = theme.text_size(item["shortcut"], caption)
+            theme.draw_text(
+                frame, item["shortcut"],
+                (b_right - width - layout.px(6), b_top + height + layout.px(5)),
+                caption, theme.GRAPHITE_500 if is_disabled else theme.TEXT_MUTED,
+            )  # fmt: skip
+        if hovered and dwell_ratio > 0 and not is_disabled:
+            fill = int((b_right - b_left) * dwell_ratio)
+            theme.fill_rect(
                 frame,
-                (left, bottom - 4),
-                (left + progress_width, bottom),
-                BUTTON_HOVER_COLOR,
-                -1,
+                (b_left, b_bottom - layout.px(4), b_left + fill, b_bottom),
+                accent,
+                1.0,
             )
 
 
-def get_thumbnail_items(frame: np.ndarray, sprites: Iterable) -> list[ThumbnailItem]:
-    items: list[ThumbnailItem] = []
-    x1 = frame.shape[1] - THUMBNAIL_WIDTH
-    y = 104
-    for index, sprite in enumerate(
-        sorted(sprites, key=lambda item: item.z_index, reverse=True)
-    ):
-        rect = (x1, y, frame.shape[1] - 12, y + 52)
-        items.append({"id": f"thumb:{id(sprite)}", "rect": rect, "sprite": sprite})
-        y += 58
-    return items
-
-
-def draw_thumbnail_strip(
-    frame: np.ndarray, items: list[ThumbnailItem], hover_target_id: str | None
-) -> None:
-    if not items:
+def _paste_thumbnail(frame: np.ndarray, sprite, rect: theme.Rect) -> None:
+    left, top, right, bottom = rect
+    inner_w, inner_h = right - left - 6, bottom - top - 6
+    image = getattr(sprite, "img", None)
+    if image is None or image.size == 0 or inner_w <= 0 or inner_h <= 0:
         return
-
-    _draw_panel(
-        frame,
-        (
-            frame.shape[1] - THUMBNAIL_WIDTH - 8,
-            98,
-            frame.shape[1] - 8,
-            frame.shape[0] - TOOLBAR_HEIGHT - 12,
-        ),
-        PANEL_BG_COLOR,
-        0.2,
-    )
-    for item in items:
-        left, top, right, bottom = item["rect"]
-        sprite = item["sprite"]
-        cv2.rectangle(frame, (left, top), (right, bottom), THUMBNAIL_BORDER_COLOR, 1)
-        thumb = cv2.resize(
-            sprite.img[:, :, :3],
-            (right - left - 8, bottom - top - 8),
-            interpolation=cv2.INTER_AREA,
-        )
-        frame[top + 4 : bottom - 4, left + 4 : right - 4] = thumb
-        if sprite.selected:
-            cv2.rectangle(frame, (left, top), (right, bottom), BUTTON_ACTIVE_COLOR, 2)
-        elif hover_target_id == item["id"]:
-            cv2.rectangle(frame, (left, top), (right, bottom), BUTTON_HOVER_COLOR, 2)
-
-
-def draw_brush_preview(
-    frame: np.ndarray,
-    fingertip: tuple[int, int] | None,
-    brush_size: int,
-    brush_color: tuple[int, int, int],
-) -> None:
-    if fingertip is None:
+    src_h, src_w = image.shape[:2]
+    scale = min(inner_w / src_w, inner_h / src_h)
+    thumb_w, thumb_h = max(1, int(src_w * scale)), max(1, int(src_h * scale))
+    thumb = cv2.resize(image, (thumb_w, thumb_h), interpolation=cv2.INTER_AREA)
+    x = left + 3 + (inner_w - thumb_w) // 2
+    y = top + 3 + (inner_h - thumb_h) // 2
+    clipped = theme.clip_rect((x, y, x + thumb_w, y + thumb_h), frame)
+    if clipped is None:
         return
-
-    center = (fingertip[0] + 18, fingertip[1] - 18)
-    radius = max(BRUSH_PREVIEW_RADIUS, brush_size)
-    cv2.circle(frame, center, radius, brush_color, 2)
-
-
-def draw_fingertip_marker(
-    frame: np.ndarray, fingertip: tuple[int, int] | None, tracking_stability: float
-) -> None:
-    if fingertip is None:
+    region = frame[y : y + thumb_h, x : x + thumb_w]
+    if region.shape[:2] != (thumb_h, thumb_w):
         return
-
-    if tracking_stability >= TRACKING_STABLE_THRESHOLD:
-        color = (80, 255, 120)
-    elif tracking_stability <= TRACKING_UNSTABLE_THRESHOLD:
-        color = (0, 140, 255)
+    if thumb.ndim == 3 and thumb.shape[2] == 4:
+        alpha = thumb[:, :, 3:4].astype(np.float32) / 255.0
+        blended = alpha * thumb[:, :, :3] + (1.0 - alpha) * region
+        region[:] = blended.astype(np.uint8)
     else:
-        color = (0, 220, 255)
+        region[:] = thumb[:, :, :3]
 
-    cv2.circle(frame, fingertip, 6, color, -1)
-    cv2.circle(frame, fingertip, 10, color, 1)
+
+def draw_layers(
+    frame: np.ndarray, layout: UiLayout, hover_target_id: str | None
+) -> None:
+    if layout.layers_rect is None:
+        return
+    theme.panel(frame, layout.layers_rect, border=None, alpha=0.7)
+    caption = _scaled(layout, theme.TYPE_CAPTION)
+    left, top, _right, _bottom = layout.layers_rect
+    _, height = theme.text_size("LAYERS", caption)
+    theme.draw_text(
+        frame, "LAYERS", (left + layout.px(6), top + height + layout.px(6)), caption,
+        theme.TEXT_MUTED,
+    )  # fmt: skip
+    for item in layout.thumbnail_items:
+        rect = item["rect"]
+        sprite = item["sprite"]
+        theme.fill_rect(frame, rect, theme.GRAPHITE_950, 0.9)
+        _paste_thumbnail(frame, sprite, rect)
+        if getattr(sprite, "selected", False):
+            theme.outline_rect(frame, rect, theme.SIGNAL_SELECT, 2)
+        elif hover_target_id == item["id"]:
+            theme.outline_rect(frame, rect, theme.TEXT_MUTED, 1)
+        else:
+            theme.outline_rect(frame, rect, theme.GRAPHITE_700, 1)
+    if layout.hidden_layer_count:
+        text = f"+{layout.hidden_layer_count} more"
+        last_bottom = (
+            layout.thumbnail_items[-1]["rect"][3]
+            if layout.thumbnail_items
+            else top + height + layout.px(10)
+        )
+        theme.draw_text(
+            frame, text, (left + layout.px(6), last_bottom + layout.px(16)), caption,
+            theme.TEXT_MUTED,
+        )  # fmt: skip
+
+
+# --- Pointer and gesture feedback -----------------------------------------
+
+
+def draw_hand_skeleton(frame: np.ndarray, points: Sequence[tuple[int, int]]) -> None:
+    if len(points) < 21:
+        return
+    for start, end in HAND_CONNECTIONS:
+        cv2.line(frame, points[start], points[end], theme.GRAPHITE_500, 1, theme.LINE)
+    for point in points:
+        cv2.circle(frame, point, 2, theme.TEXT_MUTED, -1, theme.LINE)
+
+
+def _stability_color(stability: float) -> theme.Color:
+    if stability >= TRACKING_STABLE_THRESHOLD:
+        return theme.STATUS_OK
+    if stability <= TRACKING_UNSTABLE_THRESHOLD:
+        return theme.STATUS_WARN
+    return theme.TEXT
+
+
+def draw_pointer(
+    frame: np.ndarray,
+    layout: UiLayout,
+    point: tuple[int, int] | None,
+    interaction_mode: str,
+    brush_color: theme.Color,
+    brush_thickness: int,
+    stability: float,
+) -> None:
+    """Fingertip indicator. Draw mode: brush-sized ring in the brush color.
+    Select mode: cyan reticle. The center dot reflects tracking stability."""
+    if point is None:
+        return
+    x, y = point
+    if interaction_mode == config.MODE_DRAW:
+        radius = max(layout.px(7), brush_thickness // 2 + layout.px(5))
+        cv2.circle(frame, point, radius + 1, theme.GRAPHITE_950, 3, theme.LINE)
+        ring = brush_color if any(brush_color) else theme.TEXT_MUTED
+        cv2.circle(frame, point, radius, ring, 2, theme.LINE)
+    else:
+        gap, length = layout.px(5), layout.px(9)
+        color = theme.SIGNAL_SELECT
+        for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            start = (x + dx * gap, y + dy * gap)
+            end = (x + dx * (gap + length), y + dy * (gap + length))
+            cv2.line(frame, start, end, theme.GRAPHITE_950, 4, theme.LINE)
+            cv2.line(frame, start, end, color, 2, theme.LINE)
+    cv2.circle(
+        frame, point, layout.px(2) + 1, _stability_color(stability), -1, theme.LINE
+    )
 
 
 def draw_gesture_progress(
     frame: np.ndarray,
+    layout: UiLayout,
     center: tuple[int, int] | None,
     progress: float,
     label: str,
-    color: tuple[int, int, int] = (80, 220, 255),
+    color: theme.Color,
 ) -> None:
     if center is None:
         return
-
-    progress = max(0.0, min(1.0, progress))
-    radius = 22
-    cv2.circle(frame, center, radius, (60, 70, 80), 1, cv2.LINE_AA)
-    cv2.ellipse(
-        frame,
-        center,
-        (radius, radius),
-        -90,
-        0,
-        int(progress * 360),
-        color,
-        3,
-        cv2.LINE_AA,
+    radius = layout.px(22)
+    theme.progress_arc(frame, center, radius, progress, color, max(2, layout.px(3)))
+    caption = _scaled(layout, theme.TYPE_CAPTION)
+    width, height = theme.text_size(label, caption)
+    x = center[0] + radius + layout.px(8)
+    if x + width + layout.px(10) > frame.shape[1]:
+        x = center[0] - radius - layout.px(8) - width
+    y = center[1] - radius
+    theme.fill_rect(
+        frame, (x - 5, y - height - 6, x + width + 5, y + 5), theme.GRAPHITE_950, 0.8
     )
-    text_origin = (center[0] + 28, max(20, center[1] - 24))
-    cv2.putText(
-        frame, label, text_origin, cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1, cv2.LINE_AA
-    )
+    theme.draw_text(frame, label, (x, y), caption, color)
 
 
 def draw_resize_anchor(
     frame: np.ndarray,
+    layout: UiLayout,
     first_point: tuple[int, int] | None,
     second_point: tuple[int, int] | None,
     scale_factor: float | None,
 ) -> None:
     if first_point is None or second_point is None:
         return
-
-    color = (80, 255, 120)
-    cv2.line(frame, first_point, second_point, color, 2, cv2.LINE_AA)
-    cv2.circle(frame, first_point, 8, color, 2, cv2.LINE_AA)
-    cv2.circle(frame, second_point, 8, color, 2, cv2.LINE_AA)
+    color = theme.SIGNAL_SELECT
+    cv2.line(frame, first_point, second_point, color, 1, theme.LINE)
+    for point in (first_point, second_point):
+        cv2.circle(frame, point, layout.px(7), color, 2, theme.LINE)
     midpoint = (
         (first_point[0] + second_point[0]) // 2,
         (first_point[1] + second_point[1]) // 2,
     )
     label = "Resize" if scale_factor is None else f"Resize {scale_factor:.2f}x"
-    cv2.putText(
-        frame,
-        label,
-        (midpoint[0] + 10, midpoint[1] - 10),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.5,
-        color,
-        1,
-        cv2.LINE_AA,
+    caption = _scaled(layout, theme.TYPE_LABEL)
+    width, height = theme.text_size(label, caption)
+    x, y = midpoint[0] + layout.px(10), midpoint[1] - layout.px(10)
+    theme.fill_rect(
+        frame, (x - 5, y - height - 6, x + width + 5, y + 5), theme.GRAPHITE_950, 0.8
     )
+    theme.draw_text(frame, label, (x, y), caption, color)
 
 
-def draw_fps(frame: np.ndarray, fps: float) -> None:
-    cv2.putText(
-        frame,
-        f"FPS: {fps:.1f}",
-        (14, 82),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.7,
-        FPS_COLOR,
-        2,
-        cv2.LINE_AA,
-    )
+# --- Feedback surfaces ----------------------------------------------------
 
 
-def draw_warning_overlay(frame: np.ndarray, warning_text: str | None) -> None:
-    if not warning_text:
+def draw_toasts(
+    frame: np.ndarray, layout: UiLayout, toasts: Sequence[object], now: float
+) -> None:
+    """Stack transient notifications upward from above the toolbar."""
+    if not toasts:
         return
+    label_scale = _scaled(layout, theme.TYPE_BODY)
+    pad_x, line_h = layout.px(14), layout.px(32)
+    gap = layout.px(6)
+    center_x, bottom = layout.toast_anchor
+    for toast in reversed(list(toasts)):
+        text = theme.fit_text(
+            toast.text, layout.toast_max_width - 2 * pad_x, label_scale
+        )
+        width, height = theme.text_size(text, label_scale)
+        box_w = width + 2 * pad_x + layout.px(4)
+        rect = (center_x - box_w // 2, bottom - line_h, center_x + box_w // 2, bottom)
+        alpha = 0.9
+        remaining = toast.expires_at - now
+        if remaining < 0.3:
+            alpha *= max(0.0, remaining / 0.3)
+        theme.panel(frame, rect, border=theme.GRAPHITE_700, alpha=alpha)
+        accent = theme.STATUS_COLORS.get(toast.kind, theme.TEXT_MUTED)
+        theme.fill_rect(
+            frame, (rect[0], rect[1], rect[0] + layout.px(3), rect[3]), accent, 1.0
+        )
+        theme.draw_text(
+            frame, text, (rect[0] + pad_x + layout.px(2), rect[1] + (line_h + height) // 2),
+            label_scale, theme.TEXT,
+        )  # fmt: skip
+        bottom -= line_h + gap
 
-    overlay = frame.copy()
-    text = warning_text[:28]
-    left = 212
-    right = min(frame.shape[1] - THUMBNAIL_WIDTH - 24, left + 200)
-    top = 14
-    bottom = 38
-    cv2.rectangle(overlay, (left, top), (right, bottom), WARNING_BG_COLOR, -1)
-    frame[:] = cv2.addWeighted(overlay, 0.28, frame, 0.72, 0.0)
-    cv2.putText(
-        frame,
-        text,
-        (left + 10, 31),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.5,
-        WARNING_TEXT_COLOR,
-        1,
-        cv2.LINE_AA,
-    )
 
-
-def draw_tracking_feedback(
+def draw_voice_card(
     frame: np.ndarray,
-    calibrated: bool,
-    tracking_stability: float,
-    tracking_status_text: str,
+    layout: UiLayout,
+    listening: bool,
+    speaking: bool,
+    transcript: str | None,
+    response: str | None,
+    last_update_at: float | None,
+    now: float,
 ) -> None:
-    if not calibrated:
-        text = "Calibrating hand..."
-        color = (255, 220, 140)
-    elif tracking_stability >= TRACKING_STABLE_THRESHOLD:
-        text = "DRAW READY"
-        color = (120, 255, 120)
-    elif tracking_stability <= TRACKING_UNSTABLE_THRESHOLD:
-        text = "TRACKING UNSTABLE"
-        color = (0, 140, 255)
-    else:
-        text = tracking_status_text
-        color = (0, 220, 255)
-
-    cv2.putText(
-        frame,
-        text,
-        (14, 108),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.6,
-        color,
-        2,
-        cv2.LINE_AA,
+    recent = (
+        last_update_at is not None
+        and now - last_update_at <= config.VOICE_DISPLAY_SECONDS
     )
-
-
-def draw_tracking_recovery(
-    frame: np.ndarray, tracking_stability: float, recovery_hint: str
-) -> None:
-    left, top = 14, 118
-    width, height = 150, 8
-    cv2.rectangle(frame, (left, top), (left + width, top + height), (45, 52, 64), -1)
-    filled = int(width * max(0.0, min(1.0, tracking_stability)))
-    color = (
-        (80, 255, 120)
-        if tracking_stability >= TRACKING_STABLE_THRESHOLD
-        else (0, 180, 255)
-    )
-    cv2.rectangle(frame, (left, top), (left + filled, top + height), color, -1)
-    cv2.putText(
-        frame,
-        recovery_hint,
-        (left, top + 28),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.42,
-        BUTTON_TEXT_COLOR,
-        1,
-        cv2.LINE_AA,
-    )
-
-
-def draw_onboarding(frame: np.ndarray) -> None:
-    overlay = frame.copy()
-    cv2.rectangle(
-        overlay, (32, 42), (frame.shape[1] - 32, frame.shape[0] - 42), (14, 20, 32), -1
-    )
-    frame[:] = cv2.addWeighted(overlay, 0.88, frame, 0.12, 0.0)
-    lines = (
-        ("WELCOME TO ARIA", 0.8, (80, 255, 180)),
-        ("1. Point your index finger to draw.", 0.52, BUTTON_TEXT_COLOR),
-        (
-            "2. Hold a fist to turn a drawing into a movable sprite.",
-            0.52,
-            BUTTON_TEXT_COLOR,
-        ),
-        (
-            "3. In Select Mode: pinch to select, hold to drag, two pinches to resize.",
-            0.52,
-            BUTTON_TEXT_COLOR,
-        ),
-        (
-            "Mouse: click controls.  Keys: H guide, S settings, U undo, R redo, P save project, L load project.",
-            0.45,
-            (160, 210, 255),
-        ),
-        ("Press H or click anywhere to begin.", 0.52, (80, 255, 180)),
-    )
-    y = 108
-    for text, scale, color in lines:
-        cv2.putText(
-            frame,
-            text,
-            (60, y),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            scale,
-            color,
-            1 if scale < 0.7 else 2,
-            cv2.LINE_AA,
-        )
-        y += 54
-
-
-def draw_settings_panel(frame: np.ndarray, state) -> None:
-    left, top, right, bottom = frame.shape[1] - 290, 112, frame.shape[1] - 16, 270
-    _draw_panel(frame, (left, top, right, bottom), PANEL_BG_COLOR, 0.82)
-    cv2.rectangle(frame, (left, top), (right, bottom), BUTTON_HOVER_COLOR, 1)
-    lines = (
-        "SETTINGS  [S to close]",
-        f"Draw dwell: {state.hand_scale_factor:.2f} hand scale",
-        f"Tracking: {int(state.tracking_stability * 100)}%",
-        "H: gesture guide",
-        "P / L: save / load project",
-        "U / R: scene undo / redo",
-    )
-    y = top + 26
-    for index, text in enumerate(lines):
-        cv2.putText(
-            frame,
-            text,
-            (left + 12, y),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.45,
-            (80, 255, 180) if index == 0 else BUTTON_TEXT_COLOR,
-            1,
-            cv2.LINE_AA,
-        )
-        y += 24
-
-
-def draw_voice_transcript(
-    frame: np.ndarray, transcript: str | None, response: str | None
-) -> None:
-    if not transcript and not response:
+    if not (listening or speaking or (recent and (transcript or response))):
         return
-    left, bottom = 190, frame.shape[0] - TOOLBAR_HEIGHT - 18
-    _draw_panel(
-        frame,
-        (left, bottom - 54, min(frame.shape[1] - 96, left + 420), bottom),
-        PANEL_BG_COLOR,
-        0.56,
+    label_scale = _scaled(layout, theme.TYPE_LABEL)
+    caption = _scaled(layout, theme.TYPE_CAPTION)
+    pad = layout.px(10)
+    width = layout.voice_max_width
+    inner = width - 2 * pad
+    lines: list[tuple[str, float, theme.Color]] = []
+    if listening:
+        header, color = "Listening...", theme.SIGNAL_SELECT
+    elif speaking:
+        header, color = "ARIA speaking", theme.TEXT
+    else:
+        header, color = "Voice", theme.TEXT_MUTED
+    if transcript and not listening:
+        lines.append(
+            (
+                theme.fit_text(f'Heard: "{transcript}"', inner, caption),
+                caption,
+                theme.TEXT_MUTED,
+            )
+        )
+    if response and not listening:
+        for line in theme.wrap_text(response, inner, label_scale, 3):
+            lines.append((line, label_scale, theme.TEXT))
+    line_h = layout.px(20)
+    height = pad * 2 + line_h + len(lines) * line_h
+    left, bottom = layout.voice_anchor
+    rect = (left, bottom - height, left + width, bottom)
+    theme.panel(frame, rect, border=theme.GRAPHITE_700, alpha=0.88)
+    dot_x, dot_y = left + pad + layout.px(4), rect[1] + pad + line_h // 2
+    radius = layout.px(4)
+    if listening:
+        radius += round(layout.px(2) * (0.5 + 0.5 * math.sin(now * 5.0)))
+    theme.status_dot(frame, (dot_x, dot_y), radius, color)
+    _, text_h = theme.text_size(header, caption)
+    theme.draw_text(
+        frame, header, (dot_x + layout.px(12), dot_y + text_h // 2), caption, color
     )
-    if transcript:
-        cv2.putText(
-            frame,
-            f"Heard: {transcript[:42]}",
-            (left + 10, bottom - 32),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.42,
-            BUTTON_TEXT_COLOR,
-            1,
-            cv2.LINE_AA,
+    y = rect[1] + pad + line_h
+    for text, scale, text_color in lines:
+        _, text_h = theme.text_size(text, scale)
+        theme.draw_text(
+            frame, text, (left + pad, y + (line_h + text_h) // 2), scale, text_color
         )
-    if response:
-        cv2.putText(
-            frame,
-            f"ARIA: {response[:42]}",
-            (left + 10, bottom - 10),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.42,
-            (80, 220, 255),
-            1,
-            cv2.LINE_AA,
+        y += line_h
+
+
+def draw_guide(
+    frame: np.ndarray, layout: UiLayout, steps: Sequence[tuple[str, str, bool]]
+) -> None:
+    """Compact, non-blocking quick start that checks off steps as they happen."""
+    rect = layout.guide_rect
+    left, top, right, _bottom = rect
+    theme.panel(frame, rect, border=theme.GRAPHITE_700, alpha=0.86)
+    caption = _scaled(layout, theme.TYPE_CAPTION)
+    label_scale = _scaled(layout, theme.TYPE_LABEL)
+    pad = layout.px(10)
+    _, cap_h = theme.text_size("Q", caption)
+    title_y = top + pad + cap_h
+    theme.draw_text(
+        frame, "QUICK START", (left + pad, title_y), caption, theme.TEXT_MUTED
+    )
+    hint = "Help button  |  Esc hide"
+    hint_w, _ = theme.text_size(hint, caption)
+    theme.draw_text(
+        frame, hint, (right - pad - hint_w, title_y), caption, theme.GRAPHITE_500
+    )
+    if not steps:
+        return
+    column_w = (right - left - 2 * pad) // len(steps)
+    row_y = title_y + layout.px(10)
+    for index, (title, detail, done) in enumerate(steps):
+        x = left + pad + index * column_w
+        center = (x + layout.px(7), row_y + layout.px(8))
+        if done:
+            theme.status_dot(frame, center, layout.px(6), theme.STATUS_OK)
+            cv2.line(
+                frame,
+                (center[0] - 3, center[1]),
+                (center[0] - 1, center[1] + 3),
+                theme.GRAPHITE_950,
+                2,
+                theme.LINE,
+            )
+            cv2.line(
+                frame,
+                (center[0] - 1, center[1] + 3),
+                (center[0] + 4, center[1] - 3),
+                theme.GRAPHITE_950,
+                2,
+                theme.LINE,
+            )
+        else:
+            cv2.circle(frame, center, layout.px(6), theme.TEXT_MUTED, 1, theme.LINE)
+        text_x = x + layout.px(20)
+        max_w = column_w - layout.px(32)
+        _, label_h = theme.text_size(title, label_scale)
+        theme.draw_text(
+            frame, theme.fit_text(title, max_w, label_scale), (text_x, row_y + label_h + layout.px(2)),
+            label_scale, theme.TEXT_MUTED if done else theme.TEXT,
+        )  # fmt: skip
+        theme.draw_text(
+            frame, theme.fit_text(detail, max_w, caption),
+            (text_x, row_y + label_h + cap_h + layout.px(9)), caption, theme.TEXT_MUTED,
+        )  # fmt: skip
+
+
+def draw_status_panel(
+    frame: np.ndarray, layout: UiLayout, lines: Sequence[tuple[str, str]]
+) -> None:
+    rect = layout.status_panel_rect
+    left, top, right, bottom = rect
+    theme.panel(frame, rect, border=theme.GRAPHITE_700, alpha=0.9)
+    caption = _scaled(layout, theme.TYPE_CAPTION)
+    pad = layout.px(10)
+    line_h = layout.px(20)
+    _, cap_h = theme.text_size("Q", caption)
+    y = top + pad + cap_h
+    theme.draw_text(frame, "STATUS", (left + pad, y), caption, theme.TEXT_MUTED)
+    hint = "S to close"
+    hint_w, _ = theme.text_size(hint, caption)
+    theme.draw_text(frame, hint, (right - pad - hint_w, y), caption, theme.GRAPHITE_500)
+    key_w = layout.px(96)
+    for key, value in lines:
+        y += line_h
+        if y > bottom - pad:
+            break
+        theme.draw_text(frame, key, (left + pad, y), caption, theme.TEXT_MUTED)
+        theme.draw_text(
+            frame, theme.fit_text(value, right - left - 2 * pad - key_w, caption),
+            (left + pad + key_w, y), caption, theme.TEXT,
+        )  # fmt: skip
+
+
+def draw_help(
+    frame: np.ndarray,
+    layout: UiLayout,
+    columns: Sequence[tuple[str, Sequence[tuple[str, str]]]],
+    footer: str,
+    close_hovered: bool = False,
+    close_dwell: float = 0.0,
+) -> None:
+    """Reference panel. ``columns`` = [(title, [(term, description), ...])].
+
+    A term starting with "#" renders as a sub-heading.
+    """
+    rect = layout.help_rect
+    left, top, right, bottom = rect
+    theme.panel(
+        frame, rect, border=theme.GRAPHITE_700, alpha=0.94, fill=theme.GRAPHITE_950
+    )
+    pad = layout.px(18)
+    title_scale = _scaled(layout, theme.TYPE_TITLE)
+    caption = _scaled(layout, theme.TYPE_CAPTION)
+    label_scale = _scaled(layout, theme.TYPE_LABEL)
+    _, title_h = theme.text_size("ARIA", title_scale, 2)
+    theme.draw_text(
+        frame, "ARIA HELP", (left + pad, top + pad + title_h), title_scale, theme.TEXT, 2,
+        theme.FONT_BOLD,
+    )  # fmt: skip
+    footer_w, _ = theme.text_size(footer, caption)
+    theme.draw_text(
+        frame, theme.fit_text(footer, right - left - 2 * pad - layout.px(160), caption),
+        (max(left + pad + layout.px(160), right - pad - footer_w), top + pad + title_h),
+        caption, theme.TEXT_MUTED,
+    )  # fmt: skip
+    if not columns:
+        return
+    content_top = top + pad + title_h + layout.px(18)
+    cv2.line(
+        frame,
+        (left + pad, content_top - layout.px(8)),
+        (right - pad, content_top - layout.px(8)),
+        theme.GRAPHITE_700,
+        1,
+    )
+    column_w = (right - left - 2 * pad) // len(columns)
+    line_h = layout.px(19)
+    _, cap_h = theme.text_size("Q", caption)
+    for index, (title, entries) in enumerate(columns):
+        x = left + pad + index * column_w
+        y = content_top + cap_h
+        theme.draw_text(frame, title, (x, y), caption, theme.SIGNAL_SELECT)
+        # Size the term column to its longest term (bounded) so short keys
+        # leave room for descriptions and long gesture names are not cut.
+        longest = max(
+            (
+                theme.text_size(term, label_scale)[0]
+                for term, _ in entries
+                if not term.startswith("#")
+            ),
+            default=0,
         )
+        term_w = min(int(column_w * 0.58), longest + layout.px(14))
+        for term, description in entries:
+            y += line_h
+            if y > bottom - pad:
+                break
+            if term.startswith("#"):
+                y += layout.px(4)
+                theme.draw_text(frame, term[1:], (x, y), caption, theme.TEXT_MUTED)
+                continue
+            theme.draw_text(
+                frame, theme.fit_text(term, term_w - layout.px(8), label_scale), (x, y),
+                label_scale, theme.TEXT,
+            )  # fmt: skip
+            theme.draw_text(
+                frame, theme.fit_text(description, column_w - term_w - layout.px(14), caption),
+                (x + term_w, y), caption, theme.TEXT_MUTED,
+            )  # fmt: skip
+    _draw_help_close(frame, layout, close_hovered, close_dwell)
+
+
+def _draw_help_close(
+    frame: np.ndarray, layout: UiLayout, hovered: bool, dwell: float
+) -> None:
+    """Close button for the help overlay: point at it to dismiss help."""
+    rect = layout.help_close_rect
+    label_scale = _scaled(layout, theme.TYPE_LABEL)
+    theme.fill_rect(frame, rect, theme.GRAPHITE_800, 0.96)
+    theme.outline_rect(
+        frame, rect, theme.SIGNAL_SELECT if hovered else theme.GRAPHITE_700, 2 if hovered else 1
+    )  # fmt: skip
+    if hovered and dwell > 0:
+        left, _top, right, bottom = rect
+        fill_right = left + int((right - left) * max(0.0, min(1.0, dwell)))
+        theme.fill_rect(
+            frame, (left, bottom - layout.px(4), fill_right, bottom), theme.SIGNAL_SELECT, 1.0
+        )  # fmt: skip
+    _center_text(
+        frame, "Close", rect, label_scale,
+        theme.TEXT if hovered else theme.TEXT_MUTED, 1,
+    )  # fmt: skip

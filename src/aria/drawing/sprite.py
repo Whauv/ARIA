@@ -5,16 +5,43 @@ from dataclasses import dataclass
 import cv2
 import numpy as np
 
-from ..config import (
-    MAX_SPRITE_SIZE,
-    MIN_SPRITE_SIZE,
-    SELECTED_BORDER_COLOR,
-    SELECTION_BORDER_THICKNESS,
-)
+from ..config import MAX_SPRITE_SIZE, MIN_SPRITE_SIZE
+from ..ui import theme
 
 
-@dataclass
+def fit_sprite_dimensions(
+    original_width: int, original_height: int, target_width: float
+) -> tuple[int, int]:
+    """Aspect-preserving size for a sprite scaled to ``target_width``.
+
+    Bounds apply to the longest side, so thin artwork (a single line) keeps its
+    proportions instead of being stretched to a minimum height, and neither
+    side can collapse to zero.
+    """
+    if original_width <= 0 or original_height <= 0:
+        side = max(1, int(target_width))
+        return side, side
+    longest = max(original_width, original_height)
+    scale = max(target_width, 1.0) / original_width
+    scale = max(MIN_SPRITE_SIZE / longest, min(MAX_SPRITE_SIZE / longest, scale))
+    return (
+        max(1, round(original_width * scale)),
+        max(1, round(original_height * scale)),
+    )
+
+
+@dataclass(eq=False)
 class Sprite:
+    """A placed image. Compared by identity, never by value.
+
+    ``eq=False`` is load-bearing: a value-comparing dataclass would compare the
+    numpy image fields, so ``sprites.remove(sprite)`` and ``sprite in sprites``
+    would raise ValueError as soon as the list held more than one sprite (numpy
+    arrays of different shapes cannot be broadcast, and equal shapes give an
+    ambiguous truth value). The runtime tracks sprites by ``id(...)``, so
+    identity is also the semantics every call site already expects.
+    """
+
     original_img: np.ndarray
     img: np.ndarray
     x: int
@@ -29,17 +56,27 @@ class Sprite:
 
     def contains_point(self, point: tuple[int, int]) -> bool:
         px, py = point
-        if not (self.x <= px <= self.x + self.w and self.y <= py <= self.y + self.h):
+        local_x = int(px) - self.x
+        local_y = int(py) - self.y
+        image_height, image_width = self.img.shape[:2]
+        if not (0 <= local_x < min(self.w, image_width)):
             return False
-
-        local_x = px - self.x
-        local_y = py - self.y
-        if local_x < 0 or local_y < 0 or local_x >= self.w or local_y >= self.h:
+        if not (0 <= local_y < min(self.h, image_height)):
             return False
-
-        if self.img.shape[2] == 4:
+        if self.img.ndim == 3 and self.img.shape[2] == 4:
             return int(self.img[local_y, local_x, 3]) > 20
         return True
+
+    def contains_point_padded(self, point: tuple[int, int], padding: int) -> bool:
+        px, py = point
+        return (
+            self.x - padding <= px <= self.x + self.w + padding
+            and self.y - padding <= py <= self.y + self.h + padding
+        )
+
+    @property
+    def center(self) -> tuple[float, float]:
+        return self.x + self.w / 2.0, self.y + self.h / 2.0
 
     def clamp_to_frame(self, frame_width: int, frame_height: int) -> None:
         self.x = max(0, min(frame_width - self.w, self.x))
@@ -48,23 +85,25 @@ class Sprite:
     def resize_from_original(self, scale_factor: float) -> None:
         if scale_factor <= 0:
             return
+        self.resize_to_dimensions(self.w * scale_factor)
 
-        new_w = max(MIN_SPRITE_SIZE, min(MAX_SPRITE_SIZE, int(self.w * scale_factor)))
-        self.resize_to_dimensions(new_w)
-
-    def resize_to_dimensions(self, target_width: int) -> None:
-        target_width = max(MIN_SPRITE_SIZE, min(MAX_SPRITE_SIZE, int(target_width)))
+    def resize_to_dimensions(
+        self, target_width: float, keep_center: bool = True
+    ) -> None:
         original_h, original_w = self.original_img.shape[:2]
-        aspect_ratio = original_h / original_w if original_w else 1.0
-        new_h = max(
-            MIN_SPRITE_SIZE, min(MAX_SPRITE_SIZE, int(target_width * aspect_ratio))
-        )
-
+        new_w, new_h = fit_sprite_dimensions(original_w, original_h, target_width)
+        if (new_w, new_h) == (self.w, self.h) and self.img.shape[:2] == (new_h, new_w):
+            return
+        center_x, center_y = self.center
+        interpolation = cv2.INTER_AREA if new_w < original_w else cv2.INTER_LINEAR
         self.img = cv2.resize(
-            self.original_img, (target_width, new_h), interpolation=cv2.INTER_LINEAR
+            self.original_img, (new_w, new_h), interpolation=interpolation
         )
-        self.w = target_width
+        self.w = new_w
         self.h = new_h
+        if keep_center:
+            self.x = round(center_x - new_w / 2.0)
+            self.y = round(center_y - new_h / 2.0)
 
     def scale_by_factor(self, factor: float) -> None:
         self.resize_from_original(factor)
@@ -121,57 +160,66 @@ def overlay_sprite(frame: np.ndarray, sprite: Sprite) -> None:
     frame[y1:y2, x1:x2] = blended.astype(np.uint8)
 
 
-def draw_sprite_selection(frame: np.ndarray, sprite: Sprite) -> None:
+def _selection_rect(sprite: Sprite, offset: int) -> tuple[int, int, int, int]:
+    return (
+        sprite.x - offset,
+        sprite.y - offset,
+        sprite.x + sprite.w + offset,
+        sprite.y + sprite.h + offset,
+    )
+
+
+def _tag(frame: np.ndarray, sprite: Sprite, text: str, color, offset: int) -> None:
+    scale = theme.TYPE_CAPTION
+    width, height = theme.text_size(text, scale)
+    left = max(0, sprite.x - offset)
+    bottom = sprite.y - offset - 4
+    if bottom - height - 8 < 0:
+        bottom = sprite.y + sprite.h + offset + height + 12
+    theme.fill_rect(
+        frame,
+        (left, bottom - height - 8, left + width + 12, bottom),
+        theme.GRAPHITE_900,
+    )
+    theme.draw_text(frame, text, (left + 6, bottom - 5), scale, color)
+
+
+def draw_sprite_selection(
+    frame: np.ndarray, sprite: Sprite, label: str | None = None
+) -> None:
+    """Thin outline with corner handles, kept outside the artwork."""
     if not sprite.selected:
         return
-
-    top_left = (sprite.x, sprite.y)
-    bottom_right = (sprite.x + sprite.w, sprite.y + sprite.h)
-    cv2.rectangle(
-        frame, top_left, bottom_right, SELECTED_BORDER_COLOR, SELECTION_BORDER_THICKNESS
-    )
-    cv2.putText(
-        frame,
-        "SELECTED",
-        (sprite.x, max(18, sprite.y - 8)),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.45,
-        SELECTED_BORDER_COLOR,
-        1,
-        cv2.LINE_AA,
-    )
+    offset = 4
+    left, top, right, bottom = _selection_rect(sprite, offset)
+    color = theme.SIGNAL_SELECT
+    cv2.rectangle(frame, (left, top), (right, bottom), color, 1, theme.LINE)
+    handle = 4
+    for cx, cy in ((left, top), (right, top), (left, bottom), (right, bottom)):
+        cv2.rectangle(
+            frame,
+            (cx - handle, cy - handle),
+            (cx + handle, cy + handle),
+            theme.GRAPHITE_950,
+            -1,
+        )
+        cv2.rectangle(
+            frame, (cx - handle, cy - handle), (cx + handle, cy + handle), color, 1
+        )
+    if label:
+        _tag(frame, sprite, label, color, offset)
 
 
 def draw_sprite_candidate(frame: np.ndarray, sprite: Sprite) -> None:
+    """Hover state: dashed outline only, never confused with selection."""
     if sprite.selected:
         return
-
-    top_left = (sprite.x, sprite.y)
-    bottom_right = (sprite.x + sprite.w, sprite.y + sprite.h)
-    cv2.rectangle(frame, top_left, bottom_right, (80, 220, 255), 1, cv2.LINE_AA)
-    cv2.putText(
-        frame,
-        "PINCH TO SELECT",
-        (sprite.x, max(18, sprite.y - 8)),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.4,
-        (80, 220, 255),
-        1,
-        cv2.LINE_AA,
-    )
+    theme.dashed_rect(frame, _selection_rect(sprite, 4), theme.SIGNAL_SELECT)
 
 
 def draw_sprite_delete_confirmation(frame: np.ndarray, sprite: Sprite) -> None:
-    top_left = (sprite.x - 4, sprite.y - 4)
-    bottom_right = (sprite.x + sprite.w + 4, sprite.y + sprite.h + 4)
-    cv2.rectangle(frame, top_left, bottom_right, (40, 40, 255), 2, cv2.LINE_AA)
-    cv2.putText(
-        frame,
-        "PINCH AGAIN TO DELETE",
-        (sprite.x, max(18, sprite.y - 10)),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.42,
-        (40, 40, 255),
-        1,
-        cv2.LINE_AA,
+    left, top, right, bottom = _selection_rect(sprite, 6)
+    cv2.rectangle(
+        frame, (left, top), (right, bottom), theme.STATUS_ERROR, 2, theme.LINE
     )
+    _tag(frame, sprite, "Pinch again to delete", theme.STATUS_ERROR, 6)

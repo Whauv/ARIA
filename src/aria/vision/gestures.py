@@ -138,3 +138,29 @@ def is_double_pinch(
         previous_pinch_time is not None
         and now - previous_pinch_time <= threshold_seconds
     )
+
+
+def select_primary_hand(
+    all_hands,
+    previous_point: tuple[float, float] | None,
+    frame_width: int,
+    frame_height: int,
+):
+    """Pick the hand that drives the pointer.
+
+    MediaPipe does not guarantee a stable hand order between frames, so with
+    two hands in view we follow the hand nearest the previous pointer instead
+    of always taking index 0 (which made the pointer jump between hands).
+    """
+    if not all_hands:
+        return None
+    if len(all_hands) == 1 or previous_point is None:
+        return all_hands[0]
+
+    def distance(hand) -> float:
+        tip = get_index_fingertip(hand, frame_width, frame_height)
+        if tip is None:
+            return float("inf")
+        return math.hypot(tip[0] - previous_point[0], tip[1] - previous_point[1])
+
+    return min(all_hands, key=distance)
