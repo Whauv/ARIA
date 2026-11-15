@@ -9,29 +9,23 @@ import time
 import cv2
 import numpy as np
 
+from .. import config
 from ..config import GEMINI_CACHE_SECONDS
-
-try:
-    from dotenv import load_dotenv
-except ImportError:  # pragma: no cover - optional dependency
-
-    def load_dotenv() -> bool:
-        return False
-
 
 try:
     from google import genai as google_genai
 except ImportError:  # pragma: no cover - optional dependency
     google_genai = None
 
-try:
-    import google.generativeai as legacy_genai
-except ImportError:  # pragma: no cover - optional dependency
-    legacy_genai = None
+legacy_genai = None
+if google_genai is None:  # only fall back to the deprecated SDK when needed
+    try:
+        import google.generativeai as legacy_genai
+    except ImportError:  # pragma: no cover - optional dependency
+        legacy_genai = None
 
 
 logger = logging.getLogger(__name__)
-load_dotenv()
 
 
 _CACHE = {
@@ -82,7 +76,7 @@ def describe_image_with_gemini(frame: np.ndarray, prompt: str) -> str:
         if google_genai is not None:
             client = google_genai.Client(api_key=api_key)
             response = client.models.generate_content(
-                model="gemini-1.5-flash",
+                model=config.GEMINI_MODEL,
                 contents=[
                     {
                         "role": "user",
@@ -101,7 +95,7 @@ def describe_image_with_gemini(frame: np.ndarray, prompt: str) -> str:
             text = getattr(response, "text", "") or ""
         else:
             legacy_genai.configure(api_key=api_key)
-            model = legacy_genai.GenerativeModel("gemini-1.5-flash")
+            model = legacy_genai.GenerativeModel(config.GEMINI_MODEL)
             response = model.generate_content(
                 [
                     prompt,
@@ -112,9 +106,11 @@ def describe_image_with_gemini(frame: np.ndarray, prompt: str) -> str:
                 ]
             )
             text = getattr(response, "text", "") or ""
-    except Exception as exc:  # noqa: BLE001 - external network/API boundary
-        logger.warning("Gemini image description failed: %s", exc)
-        return f"I could not analyze the image right now: {exc}"
+    except Exception as exc:
+        # Log locally for debugging; never speak or display raw API errors.
+        logger.warning("Gemini image description failed: %s", type(exc).__name__)
+        logger.debug("Gemini failure detail", exc_info=True)
+        return "I could not reach Gemini right now. Check your connection or API key."
 
     final_text = text.strip() or "I could not identify the drawing."
     _CACHE["key"] = cache_key

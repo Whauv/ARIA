@@ -31,6 +31,25 @@ class DrawingCanvas:
         self.brush_color = (
             config.get_brush_color(config.DEFAULT_BRUSH_NAME) or config.DRAW_COLOR
         )
+        # Incremented whenever committed content changes; lets the app detect
+        # scene changes without scanning pixels every frame.
+        self.revision = 0
+        self._content_cache: tuple[int, bool] = (0, False)
+
+    def mark_changed(self) -> None:
+        self.revision += 1
+
+    def stroke_in_progress(self) -> bool:
+        return bool(self._current_stroke)
+
+    def has_content(self) -> bool:
+        if self._current_stroke:
+            return True
+        cached_revision, cached_value = self._content_cache
+        if cached_revision != self.revision:
+            cached_value = bool(np.any(self.canvas))
+            self._content_cache = (self.revision, cached_value)
+        return cached_value
 
     def set_brush_color(self, color: tuple[int, int, int]) -> None:
         self.brush_color = color
@@ -61,6 +80,11 @@ class DrawingCanvas:
             )
             self._current_stroke.clear()
             self._push_snapshot()
+            self.mark_changed()
+
+    def discard_stroke(self) -> None:
+        """Drop an in-progress stroke without committing it."""
+        self._current_stroke.clear()
 
     def add_segment(self, start: tuple[int, int], end: tuple[int, int]) -> None:
         if start is None or end is None:
@@ -88,6 +112,7 @@ class DrawingCanvas:
         self.strokes.clear()
         self._current_stroke.clear()
         self._push_snapshot()
+        self.mark_changed()
 
     def undo_last_stroke(self) -> bool:
         if self._current_stroke:
@@ -103,6 +128,7 @@ class DrawingCanvas:
         self.canvas[:] = self.undo_stack[-1]
         if self.strokes:
             self.strokes.pop()
+        self.mark_changed()
         return True
 
     def overlay_on(self, frame: np.ndarray, alpha: float) -> np.ndarray:

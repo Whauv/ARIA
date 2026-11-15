@@ -2,38 +2,26 @@ from __future__ import annotations
 
 import os
 
-DRAW_COLOR = (0, 255, 0)
+try:
+    from dotenv import load_dotenv
+except ImportError:  # pragma: no cover - optional dependency
+    load_dotenv = None
+
+# Load .env before any environment-dependent setting below is evaluated.
+# Without this, values such as ALLOW_CLOUD_SPEECH_RECOGNITION=0 in .env were
+# read before the file was loaded and silently ignored.
+if load_dotenv is not None:
+    load_dotenv()
+
+DRAW_COLOR = (0, 255, 0)  # BGR fallback brush color
+# Visual tokens (colors, type ramp) live in aria/ui/theme.py.
 DEFAULT_BRUSH_NAME = "green"
 DEFAULT_SAVE_PATH = "aria_snapshot.png"
 DEFAULT_PROJECT_PATH = "aria_project.npz"
-STATUS_COLOR = (255, 255, 255)
-STATUS_BG_COLOR = (30, 30, 30)
-MODE_BG_COLOR = (36, 42, 56)
-SELECTED_BORDER_COLOR = (0, 255, 255)
-TOOLBAR_BG_COLOR = (18, 22, 30)
-PANEL_BG_COLOR = (20, 24, 34)
-WARNING_BG_COLOR = (0, 140, 255)
-WARNING_TEXT_COLOR = (255, 255, 255)
-FPS_COLOR = (200, 255, 200)
-BUTTON_ACTIVE_COLOR = (74, 124, 255)
-BUTTON_HOVER_COLOR = (72, 78, 96)
-BUTTON_TEXT_COLOR = (245, 245, 245)
-THUMBNAIL_BORDER_COLOR = (170, 170, 170)
-ERASER_COLOR = (60, 60, 60)
-VOICE_IDLE_COLOR = (180, 180, 180)
-VOICE_LISTENING_COLOR = (255, 180, 40)
-VOICE_SPEAKING_COLOR = (255, 255, 255)
-VOICE_PULSE_COLOR = (255, 120, 40)
 
 LINE_THICKNESS = 5
 ALPHA = 0.75
-SELECTION_BORDER_THICKNESS = 2
-TOOLBAR_HEIGHT = 76
-PALETTE_HEIGHT = 42
-THUMBNAIL_WIDTH = 76
-DWELL_SECONDS = 0.55
 DOUBLE_PINCH_SECONDS = 0.5
-BRUSH_PREVIEW_RADIUS = 10
 DRAW_POSE_GRACE_SECONDS = 0.15
 MIN_DRAW_MOVEMENT_PX = 4
 MAX_SEGMENT_STEP_PX = 10
@@ -96,6 +84,9 @@ VOICE_WAKEWORD_CALIBRATION_SECONDS = 0.5
 DRAW_INDEX_MIN_OPENNESS = 0.02
 DRAW_NON_INDEX_MAX_OPENNESS = 0.015
 DRAW_NON_INDEX_ALLOWED_OPEN_FINGERS = 1
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash").strip() or (
+    "gemini-2.5-flash"
+)
 ALLOW_CLOUD_SPEECH_RECOGNITION = os.getenv(
     "ALLOW_CLOUD_SPEECH_RECOGNITION", "1"
 ).strip().lower() not in {
@@ -106,9 +97,7 @@ ALLOW_CLOUD_SPEECH_RECOGNITION = os.getenv(
 
 STATUS_DRAWING = "Drawing"
 STATUS_PAUSED = "Paused"
-STATUS_CLEARED = "Cleared"
 STATUS_IDLE = "Idle"
-STATUS_SPRITE_CREATED = "Sprite Created"
 
 BRUSH_COLORS = {
     "black": (0, 0, 0),
@@ -134,16 +123,75 @@ PALETTE_ORDER = [
     "orange",
     "eraser",
 ]
-TEST_PALETTE_ORDER = ["green", "white"]
+# Colors cycled by the draw-mode "pinch and hold" gesture.
+QUICK_TOGGLE_COLORS = ["green", "white"]
 
+MODE_DRAW = "draw_mode"
+MODE_SELECT = "select_mode"
+MODE_LABELS = {MODE_DRAW: "DRAW", MODE_SELECT: "SELECT"}
+
+# (action id, label, keyboard hint). Mode buttons come first, then edits.
+# Every command reachable by pointing: each entry becomes an on-screen button
+# that a dwell (hover-and-hold) activates, so the keyboard is an alternative
+# rather than the only way to reach an action.
 TOOLBAR_ACTIONS = [
-    ("draw_mode", "Draw Mode"),
-    ("select_mode", "Select Mode"),
-    ("clear", "Clear"),
-    ("save", "Save"),
-    ("undo", "Undo"),
+    ("draw_mode", "Draw", "D"),
+    ("select_mode", "Select", "V"),
+    ("undo", "Undo", "U"),
+    ("redo", "Redo", "R"),
+    ("clear", "Clear", "C"),
+    ("delete", "Delete", "X"),
+    ("export", "Export", "E"),
+    ("save_project", "Save", "P"),
+    ("load_project", "Load", "L"),
+    ("help", "Help", "H"),
+    ("status", "Status", "S"),
 ]
+# Wider gaps after these actions separate the groups: modes | edit | file | view.
+TOOLBAR_GROUP_BREAKS = ("select_mode", "delete", "load_project")
+
+# --- Feedback, workspace, and service reliability -------------------------
+# Frames smaller than this are upscaled (aspect preserved) so overlays stay
+# legible; all coordinates (landmarks, UI, mouse) live in this workspace space.
+WORKSPACE_MIN_HEIGHT = 720
+WINDOW_MAX_WIDTH = 1400
+WINDOW_MAX_HEIGHT = 900
+CAPTURE_MAX_CONSECUTIVE_FAILURES = 30
+
+# Requested camera stream. Most webcams default to 640x480 unless asked for
+# more, which the workspace then had to upscale (soft, blurry image). We ask
+# for 720p natively and fall back to whatever the device actually grants.
+# Override per machine with ARIA_CAMERA_WIDTH / ARIA_CAMERA_HEIGHT.
+CAPTURE_WIDTH = int(os.getenv("ARIA_CAMERA_WIDTH", "1280"))
+CAPTURE_HEIGHT = int(os.getenv("ARIA_CAMERA_HEIGHT", "720"))
+# Many webcams only deliver 720p+ at full frame rate as MJPG; the default
+# YUY2 stream drops to 5-10 fps at that size. Set ARIA_CAMERA_MJPG=0 if a
+# device misbehaves with MJPG.
+CAPTURE_PREFER_MJPG = os.getenv("ARIA_CAMERA_MJPG", "1").strip().lower() not in {
+    "0",
+    "false",
+    "no",
+}
+TOAST_SECONDS = 2.2
+TOAST_ERROR_SECONDS = 4.0
+MAX_TOASTS = 3
+MAX_PENDING_EVENTS = 16
+VOICE_DISPLAY_SECONDS = 8.0
+VOICE_COMMAND_QUEUE_SIZE = 8
+VOICE_COMMAND_RESULT_TIMEOUT_SECONDS = 2.0
+TTS_QUEUE_SIZE = 2
+SPRITE_SCALE_STEP_UP = 1.15
+SPRITE_SCALE_STEP_DOWN = 1 / 1.15
+VOICE_SCALE_UP = 1.5
+VOICE_SCALE_DOWN = 0.5
 
 
 def get_brush_color(color_name: str) -> tuple[int, int, int] | None:
     return BRUSH_COLORS.get(color_name.lower())
+
+
+def dwell_seconds_for_mode(interaction_mode: str) -> float:
+    """Single source of truth for toolbar/palette dwell time per mode."""
+    if interaction_mode == MODE_DRAW:
+        return UI_DRAW_MODE_DWELL_SECONDS
+    return UI_SELECT_MODE_DWELL_SECONDS

@@ -13,6 +13,7 @@ class CommandIntent(str, Enum):
     DELETE_SELECTION = "delete_selection"
     SCALE_SELECTION = "scale_selection"
     UNDO = "undo"
+    REDO = "redo"
     SAVE = "save"
     SWITCH_MODE = "switch_mode"
     UNKNOWN = "unknown"
@@ -54,16 +55,23 @@ def parse_command(command: str) -> ParsedCommand:
 
     if normalized in {"make it bigger", "enlarge"}:
         return ParsedCommand(
-            intent=CommandIntent.SCALE_SELECTION, raw_text=normalized, scale_factor=1.5
+            intent=CommandIntent.SCALE_SELECTION,
+            raw_text=normalized,
+            scale_factor=config.VOICE_SCALE_UP,
         )
 
     if normalized in {"make it smaller", "shrink"}:
         return ParsedCommand(
-            intent=CommandIntent.SCALE_SELECTION, raw_text=normalized, scale_factor=0.5
+            intent=CommandIntent.SCALE_SELECTION,
+            raw_text=normalized,
+            scale_factor=config.VOICE_SCALE_DOWN,
         )
 
     if normalized == "undo":
         return ParsedCommand(intent=CommandIntent.UNDO, raw_text=normalized)
+
+    if normalized == "redo":
+        return ParsedCommand(intent=CommandIntent.REDO, raw_text=normalized)
 
     if normalized == "save":
         return ParsedCommand(intent=CommandIntent.SAVE, raw_text=normalized)
