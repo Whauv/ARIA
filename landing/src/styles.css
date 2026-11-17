@@ -433,6 +433,14 @@ kbd {
   color: var(--signal-select);
 }
 
+/* Each word of a staggered headline animates as its own box. `pre` keeps the
+   trailing space that separates it from the next word; lines still break
+   between words because the break opportunity sits between the spans. */
+.text-effect__word {
+  display: inline-block;
+  white-space: pre;
+}
+
 .hero .lede {
   font-size: clamp(1.05rem, 1.6vw, 1.2rem);
 }
