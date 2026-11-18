@@ -452,6 +452,14 @@ kbd {
   margin-top: 2rem;
 }
 
+/* Wrapper for the magnetic CTAs. inline-flex so it hugs the button and acts
+   as the flex item .hero-ctas expects; will-change keeps the transform on
+   its own layer instead of repainting the button each frame. */
+.magnetic {
+  display: inline-flex;
+  will-change: transform;
+}
+
 .hero-facts {
   display: flex;
   flex-wrap: wrap;

@@ -1,6 +1,7 @@
 import { REPO_URL } from "../content";
 import type { TextRun } from "../lib/textRuns";
 import { HeroInstrument } from "./HeroInstrument";
+import { Magnetic } from "./Magnetic";
 import { TextEffect } from "./TextEffect";
 
 /** The headline, in styled runs so the accent colours survive the word split. */
@@ -24,12 +25,16 @@ export function Hero() {
             and a keyboard for everything else.
           </p>
           <div className="hero-ctas">
-            <a className="btn btn--primary" href="#run">
-              Run it locally
-            </a>
-            <a className="btn btn--ghost" href={REPO_URL} rel="noopener">
-              View on GitHub
-            </a>
+            <Magnetic>
+              <a className="btn btn--primary" href="#run">
+                Run it locally
+              </a>
+            </Magnetic>
+            <Magnetic>
+              <a className="btn btn--ghost" href={REPO_URL} rel="noopener">
+                View on GitHub
+              </a>
+            </Magnetic>
           </div>
           <ul className="hero-facts" aria-label="At a glance">
             <li>Hand tracking runs locally</li>
