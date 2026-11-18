@@ -14,10 +14,11 @@ import { runsToText, runsToWords, staggerForWordCount, type TextRun } from "../l
  *
  * Accessibility departs from the original deliberately. motion-primitives
  * adds a visually-hidden copy of the sentence beside the aria-hidden words,
- * which duplicates the text in the DOM: the heading then reads twice in the
- * accessibility tree and selecting it copies the sentence twice. Naming the
- * element with aria-label instead gives the same single announcement with no
- * duplicate text node.
+ * so the sentence exists twice in the DOM. Assistive tech should still read
+ * it once, since the words are aria-hidden, but the duplicate text node is
+ * real: selecting the headline copied the sentence twice. Naming the element
+ * with aria-label keeps the single announcement and leaves one copy of the
+ * text, which is what `textContent` now returns.
  */
 
 type Tag = "h1" | "h2" | "p";
