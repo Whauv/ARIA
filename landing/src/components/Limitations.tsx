@@ -1,3 +1,5 @@
+import { AnimatedGroup, AnimatedItem } from "./AnimatedGroup";
+
 const limits: [string, string][] = [
   ["Needs a webcam", "ARIA reads your hand from the camera feed; without one there is nothing to track."],
   [
@@ -24,9 +26,9 @@ export function Limitations() {
           <p className="eyebrow">Limitations</p>
           <h2 id="limits-title">What to expect before you install.</h2>
         </div>
-        <ul className="limits">
+        <AnimatedGroup as="ul" className="limits">
           {limits.map(([title, body], i) => (
-            <li key={title}>
+            <AnimatedItem as="li" key={title}>
               <span className="mark" aria-hidden="true">
                 {String(i + 1).padStart(2, "0")}
               </span>
@@ -34,9 +36,9 @@ export function Limitations() {
                 <strong>{title}</strong>
                 {body}
               </span>
-            </li>
+            </AnimatedItem>
           ))}
-        </ul>
+        </AnimatedGroup>
       </div>
     </section>
   );

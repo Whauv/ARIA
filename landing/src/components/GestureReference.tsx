@@ -1,4 +1,5 @@
 import { gestureGroups, keyboard } from "../content";
+import { AnimatedGroup, AnimatedItem } from "./AnimatedGroup";
 
 export function GestureReference() {
   return (
@@ -13,9 +14,9 @@ export function GestureReference() {
           </p>
         </div>
 
-        <div className="ref">
+        <AnimatedGroup className="ref" stagger={0.08}>
           {gestureGroups.map((g) => (
-            <div className="ref-group" key={g.id}>
+            <AnimatedItem className="ref-group" key={g.id}>
               <h3 id={g.id}>
                 <span className={`chip chip--${g.mode}`}>{g.mode === "any" ? "ANY" : g.mode.toUpperCase()}</span>
                 {g.title}
@@ -45,10 +46,10 @@ export function GestureReference() {
                   <strong>Tracking lost:</strong> {g.note}
                 </p>
               )}
-            </div>
+            </AnimatedItem>
           ))}
 
-          <div className="ref-group">
+          <AnimatedItem className="ref-group">
             <h3 id="keys-title">Keyboard &amp; mouse</h3>
             <dl className="keys-grid" aria-labelledby="keys-title">
               {keyboard.map((k) => (
@@ -69,8 +70,8 @@ export function GestureReference() {
               Mouse: click the toolbar, color swatches, and layer thumbnails. In Select mode, click a
               sprite to select it, drag to move it, and click empty space to deselect.
             </p>
-          </div>
-        </div>
+          </AnimatedItem>
+        </AnimatedGroup>
       </div>
     </section>
   );
