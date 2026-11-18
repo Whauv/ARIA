@@ -1,4 +1,6 @@
 import { gestureGroups, keyboard } from "../content";
+import { AnimatedGroup, AnimatedItem } from "./AnimatedGroup";
+import { Disclosure } from "./Disclosure";
 
 export function GestureReference() {
   return (
@@ -13,13 +15,23 @@ export function GestureReference() {
           </p>
         </div>
 
-        <div className="ref">
+        <AnimatedGroup className="ref" stagger={0.08}>
           {gestureGroups.map((g) => (
-            <div className="ref-group" key={g.id}>
-              <h3 id={g.id}>
-                <span className={`chip chip--${g.mode}`}>{g.mode === "any" ? "ANY" : g.mode.toUpperCase()}</span>
-                {g.title}
-              </h3>
+            <AnimatedItem className="ref-group" key={g.id}>
+              <Disclosure
+                headingId={g.id}
+                summary={
+                  <>
+                    {/* The chip repeats the mode already in the title, so it
+                        is decorative: hiding it keeps the button's accessible
+                        name "Draw mode" rather than "DRAWDraw mode". */}
+                    <span className={`chip chip--${g.mode}`} aria-hidden="true">
+                      {g.mode === "any" ? "ANY" : g.mode.toUpperCase()}
+                    </span>
+                    {g.title}
+                  </>
+                }
+              >
               <div className="table-scroll">
                 <table className="ref-table" aria-labelledby={g.id}>
                   <thead>
@@ -45,11 +57,12 @@ export function GestureReference() {
                   <strong>Tracking lost:</strong> {g.note}
                 </p>
               )}
-            </div>
+              </Disclosure>
+            </AnimatedItem>
           ))}
 
-          <div className="ref-group">
-            <h3 id="keys-title">Keyboard &amp; mouse</h3>
+          <AnimatedItem className="ref-group">
+            <Disclosure headingId="keys-title" summary="Keyboard & mouse">
             <dl className="keys-grid" aria-labelledby="keys-title">
               {keyboard.map((k) => (
                 <div key={k.action}>
@@ -69,8 +82,9 @@ export function GestureReference() {
               Mouse: click the toolbar, color swatches, and layer thumbnails. In Select mode, click a
               sprite to select it, drag to move it, and click empty space to deselect.
             </p>
-          </div>
-        </div>
+            </Disclosure>
+          </AnimatedItem>
+        </AnimatedGroup>
       </div>
     </section>
   );

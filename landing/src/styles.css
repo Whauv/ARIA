@@ -433,6 +433,14 @@ kbd {
   color: var(--signal-select);
 }
 
+/* Each word of a staggered headline animates as its own box. `pre` keeps the
+   trailing space that separates it from the next word; lines still break
+   between words because the break opportunity sits between the spans. */
+.text-effect__word {
+  display: inline-block;
+  white-space: pre;
+}
+
 .hero .lede {
   font-size: clamp(1.05rem, 1.6vw, 1.2rem);
 }
@@ -442,6 +450,14 @@ kbd {
   flex-wrap: wrap;
   gap: 0.75rem;
   margin-top: 2rem;
+}
+
+/* Wrapper for the magnetic CTAs. inline-flex so it hugs the button and acts
+   as the flex item .hero-ctas expects; will-change keeps the transform on
+   its own layer instead of repainting the button each frame. */
+.magnetic {
+  display: inline-flex;
+  will-change: transform;
 }
 
 .hero-facts {
@@ -576,6 +592,54 @@ kbd {
   gap: 0.75rem;
   font-size: 1.15rem;
   margin-bottom: 0.75rem;
+}
+
+/* The reference headings double as disclosure triggers. The button carries
+   the layout the h3 used to, so the chip and title still sit in a row. */
+.ref-group h3 .disclosure-trigger {
+  flex: 1;
+}
+
+.disclosure-trigger {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.disclosure-summary {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.disclosure-chevron {
+  flex: none;
+  margin-left: auto;
+  color: var(--text-muted);
+  transition: transform 160ms ease;
+}
+
+.disclosure-chevron[data-open="false"] {
+  transform: rotate(-90deg);
+}
+
+/* Motion's height animation needs the panel clipped while it collapses. */
+.disclosure-panel {
+  overflow: hidden;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .disclosure-chevron {
+    transition: none;
+  }
 }
 
 .ref-note {
